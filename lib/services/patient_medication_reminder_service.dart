@@ -21,6 +21,7 @@ class PatientMedicationReminderService {
     importance: Importance.max,
     priority: Priority.high,
     playSound: true,
+    sound: RawResourceAndroidNotificationSound('call'),
     enableVibration: true,
     category: AndroidNotificationCategory.alarm,
     fullScreenIntent: true,

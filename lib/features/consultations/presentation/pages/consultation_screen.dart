@@ -589,25 +589,22 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
       }
       await _audioPlayer.stop();
       if (audioUrl != null && audioUrl.isNotEmpty) {
-        try {
-          await _audioPlayer.play(UrlSource(audioUrl));
-        } catch (_) {
-          final localPath = await _downloadRemoteAudioToFile(
-            messageId: messageId,
-            audioUrl: audioUrl,
-          );
+        final localPath = await _downloadRemoteAudioToFile(
+          messageId: messageId,
+          audioUrl: audioUrl,
+        );
 
-          if (localPath != null) {
-            await _audioPlayer.play(DeviceFileSource(localPath));
-          } else if (inlineAudioBase64 != null) {
-            final path = await _createInlineAudioFile(
-              messageId: messageId,
-              base64Data: inlineAudioBase64,
-            );
-            await _audioPlayer.play(DeviceFileSource(path));
-          } else {
-            rethrow;
-          }
+        if (localPath != null) {
+          await _audioPlayer.play(DeviceFileSource(localPath));
+        } else if (inlineAudioBase64 != null) {
+          final path = await _createInlineAudioFile(
+            messageId: messageId,
+            base64Data: inlineAudioBase64,
+          );
+          await _audioPlayer.play(DeviceFileSource(path));
+        } else {
+          _showErrorSnackbar('تعذر تحميل الملف الصوتي من الرابط');
+          return;
         }
       } else {
         final path = await _createInlineAudioFile(
@@ -1404,12 +1401,20 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
                         ),
                       ),
                       if (!canSend)
-                        IconButton(
-                          onPressed: _toggleVoiceRecording,
-                          tooltip: _isRecording ? 'إيقاف وإرسال التسجيل' : 'تسجيل صوتي',
-                          icon: Icon(
-                            _isRecording ? Icons.stop_circle_rounded : Icons.mic_rounded,
-                            color: _isRecording ? theme.colorScheme.error : theme.primaryColor,
+                        Container(
+                          decoration: BoxDecoration(
+                            color: _isRecording
+                                ? theme.colorScheme.error.withOpacity(0.15)
+                                : Colors.blue.withOpacity(0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: IconButton(
+                            onPressed: _toggleVoiceRecording,
+                            tooltip: _isRecording ? 'إيقاف وإرسال التسجيل' : 'تسجيل صوتي',
+                            icon: Icon(
+                              _isRecording ? Icons.stop_circle_rounded : Icons.mic_rounded,
+                              color: _isRecording ? theme.colorScheme.error : Colors.blue,
+                            ),
                           ),
                         ),
                     ],
