@@ -78,10 +78,10 @@ class LocalInAppNotificationService {
       if (type == 'message' && consultationId != null && consultationId.isNotEmpty) {
         _navigatorKey!.currentState!.pushNamed('/consultation', arguments: {
           'consultationId': consultationId,
-          'doctorId': data['doctorId'] ?? '',
-          'userId': data['userId'] ?? '',
-          'doctorName': data['doctorName'] ?? '',
-          'patientName': data['patientName'] ?? '',
+          'doctorId': (data['doctorId'] ?? '').toString(),
+          'userId': (data['userId'] ?? '').toString(),
+          'doctorName': (data['doctorName'] ?? '').toString(),
+          'patientName': (data['patientName'] ?? '').toString(),
           'isDoctor': data['isDoctor'] ?? false,
         });
       }

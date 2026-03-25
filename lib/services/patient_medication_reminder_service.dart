@@ -35,6 +35,7 @@ class PatientMedicationReminderService {
 
   static Future<void> initialize() async {
     tz_data.initializeTimeZones();
+    tz.setLocalLocation(tz.getLocation('Asia/Riyadh'));
 
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings();
@@ -197,18 +198,33 @@ class PatientMedicationReminderService {
           continue;
         }
 
-        await _notifications.zonedSchedule(
-          id,
-          '⏰ موعد الدواء',
-          '$medicationName\n$instructions',
-          scheduled,
-          const NotificationDetails(android: _androidDetails, iOS: _iosDetails),
-          uiLocalNotificationDateInterpretation:
-              UILocalNotificationDateInterpretation.absoluteTime,
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-          payload:
-              '{"type":"medication","medicationId":"$medicationId","day":$day,"time":"${times[index]}"}',
-        );
+        try {
+          await _notifications.zonedSchedule(
+            id,
+            '⏰ موعد الدواء',
+            '$medicationName\n$instructions',
+            scheduled,
+            const NotificationDetails(android: _androidDetails, iOS: _iosDetails),
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+            payload:
+                '{"type":"medication","medicationId":"$medicationId","day":$day,"time":"${times[index]}"}',
+          );
+        } catch (_) {
+          await _notifications.zonedSchedule(
+            id,
+            '⏰ موعد الدواء',
+            '$medicationName\n$instructions',
+            scheduled,
+            const NotificationDetails(android: _androidDetails, iOS: _iosDetails),
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            payload:
+                '{"type":"medication","medicationId":"$medicationId","day":$day,"time":"${times[index]}"}',
+          );
+        }
       }
     }
 
