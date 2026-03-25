@@ -1,12 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:intl/intl.dart';
-import 'package:timezone/data/latest.dart' as tz;
-import 'package:timezone/timezone.dart' as tz;
 import 'package:digl/services/user_role_service.dart';
-import 'package:digl/core/config/theme.dart';
+import 'package:digl/services/patient_medication_reminder_service.dart';
 
 import 'medication_form.dart';
 
@@ -20,24 +17,16 @@ class MedicationsScreen extends StatefulWidget {
 class _MedicationsScreenState extends State<MedicationsScreen> {
   String? userId;
   bool isLoading = true;
-  // ✅ متغير للتحقق من أن المستخدم دكتور وله صلاحية إضافة أدوية
   bool canAddMedications = false;
-
-  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-  FlutterLocalNotificationsPlugin();
 
   @override
   void initState() {
     super.initState();
-    tz.initializeTimeZones();
     _initUser();
-    _initializeNotifications();
   }
 
   Future<void> _initUser() async {
     final user = FirebaseAuth.instance.currentUser;
-
-    // ✅ التحقق من صلاحية إضافة الأدوية
     final canAdd = await UserRoleService.canAddMedication();
 
     setState(() {
@@ -47,75 +36,13 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
     });
   }
 
-  Future<void> _initializeNotifications() async {
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-
-    const initSettings = InitializationSettings(android: androidSettings);
-
-    await flutterLocalNotificationsPlugin.initialize(initSettings);
-
-    const channel = AndroidNotificationChannel(
-      'medication_channel',
-      'تنبيهات الأدوية',
-      description: 'تنبيهات لتذكير المريض بتناول الدواء',
-      importance: Importance.high,
-    );
-
-    await flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
-  }
-
-  Future<void> scheduleDailyNotification({
-    required int index,
-    required String uniqueKey,
-    required String title,
-    required String body,
-    required TimeOfDay time,
-  }) async {
-    final int id = (uniqueKey.hashCode + index) & 0x7FFFFFFF;
-
-    final now = tz.TZDateTime.now(tz.local);
-    final scheduledDate = tz.TZDateTime(
-      tz.local,
-      now.year,
-      now.month,
-      now.day,
-      time.hour,
-      time.minute,
-    ).isBefore(now)
-        ? tz.TZDateTime(tz.local, now.year, now.month, now.day + 1, time.hour, time.minute)
-        : tz.TZDateTime(tz.local, now.year, now.month, now.day, time.hour, time.minute);
-
-    await flutterLocalNotificationsPlugin.zonedSchedule(
-      id,
-      title,
-      body,
-      scheduledDate,
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'medication_channel',
-          'تنبيهات الأدوية',
-          channelDescription: 'تنبيهات لتذكير المريض بتناول دوائه',
-          importance: Importance.max,
-          priority: Priority.high,
-        ),
-      ),
-      uiLocalNotificationDateInterpretation:
-      UILocalNotificationDateInterpretation.absoluteTime,
-      matchDateTimeComponents: DateTimeComponents.time,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-    );
-  }
-
   Future<void> _deleteMedication(String docId) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('تأكيد الحذف'),
         content:
-        const Text('هل أنت متأكد أنك تريد حذف هذا الدواء؟ لا يمكن التراجع بعد الحذف.'),
+            const Text('هل أنت متأكد أنك تريد حذف هذا الدواء؟ لا يمكن التراجع بعد الحذف.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
           ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('حذف')),
@@ -124,20 +51,67 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
     );
 
     if (confirm == true) {
+      await PatientMedicationReminderService.cancelMedicationReminders(docId);
       await FirebaseFirestore.instance.collection('medications').doc(docId).delete();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف الدواء')));
     }
   }
 
-  String formatTimestamp(dynamic timestamp) {
-    if (timestamp == null) return 'غير محدد';
-    if (timestamp is Timestamp) {
-      final dt = timestamp.toDate();
-      return DateFormat('dd/MM/yyyy hh:mm a').format(dt);
+  Future<void> _approveMedication(String medicationId) async {
+    await PatientMedicationReminderService.approveMedication(medicationId: medicationId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('✅ تمت الموافقة وتمت جدولة المنبهات يوميًا')),
+    );
+  }
+
+  Future<void> _rejectMedication(String medicationId) async {
+    await PatientMedicationReminderService.rejectMedication(medicationId: medicationId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تم رفض طلب الدواء')),
+    );
+  }
+
+  String _statusText(String status) {
+    switch (status) {
+      case 'approved':
+        return 'موافق عليه';
+      case 'rejected':
+        return 'مرفوض';
+      case 'pending':
+      default:
+        return 'بانتظار موافقة المريض';
     }
-    if (timestamp is String) return timestamp;
-    return timestamp.toString();
+  }
+
+
+
+  int _remainingDays(Map<String, dynamic> data) {
+    final durationRaw = data['durationDays']?.toString() ?? data['duration']?.toString() ?? '30';
+    final days = int.tryParse(RegExp(r'\d+').firstMatch(durationRaw)?.group(0) ?? '30') ?? 30;
+    final approvedAt = data['approvedAt'] as Timestamp?;
+    final start = approvedAt?.toDate() ?? DateTime.now();
+    final end = start.add(Duration(days: days));
+    final left = end.difference(DateTime.now()).inDays;
+    return left < 0 ? 0 : left;
+  }
+
+  String _formatRemainingDays(Map<String, dynamic> data) {
+    final d = _remainingDays(data);
+    return d == 0 ? 'انتهت المدة' : 'متبقي $d يوم';
+  }
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'approved':
+        return Colors.green;
+      case 'rejected':
+        return Colors.red;
+      case 'pending':
+      default:
+        return Colors.orange;
+    }
   }
 
   @override
@@ -149,52 +123,23 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
     if (userId == null) {
       return const Scaffold(body: Center(child: Text('الرجاء تسجيل الدخول.')));
     }
+
     final theme = Theme.of(context);
     final isDarkMode = theme.brightness == Brightness.dark;
+
+    Query medicationsQuery = FirebaseFirestore.instance.collection('medications');
+    medicationsQuery = canAddMedications
+        ? medicationsQuery.where('userId', isEqualTo: userId)
+        : medicationsQuery.where('patientId', isEqualTo: userId);
 
     return Scaffold(
       appBar: AppBar(
         backgroundColor: isDarkMode ? Colors.grey[900] : Colors.white,
         foregroundColor: Colors.blue,
         elevation: 2,
-        title: const Text('إدارة الأدوية'),
+        title: Text(canAddMedications ? 'إدارة الأدوية (الطبيب)' : 'أدويتي'),
         centerTitle: true,
         actions: [
-          // ✅ زر الإخطارات متاح للجميع
-          IconButton(
-            icon: const Icon(Icons.notifications, color: Colors.blue),
-            onPressed: () async {
-              final snapshot = await FirebaseFirestore.instance
-                  .collection('medications')
-                  .where('userId', isEqualTo: userId)
-                  .get();
-
-              for (final doc in snapshot.docs) {
-                final data = doc.data();
-                final name = data['name'] ?? 'دواء';
-                final schedule = data['schedule'] ?? '';
-                final times = (data['times'] as List<dynamic>? ?? []).map((t) {
-                  final date = DateFormat('hh:mm a').parse(t as String);
-                  return TimeOfDay(hour: date.hour, minute: date.minute);
-                }).toList();
-
-                for (int i = 0; i < times.length; i++) {
-                  await scheduleDailyNotification(
-                    index: i,
-                    uniqueKey: '${doc.id}-$i',
-                    title: 'موعد تناول الدواء: $name',
-                    body: 'الرجاء تناول $schedule',
-                    time: times[i],
-                  );
-                }
-              }
-
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('تم جدولة جميع التنبيهات')),
-              );
-            },
-          ),
-          // ✅ زر الإضافة يظهر فقط للأطباء
           if (canAddMedications)
             IconButton(
               icon: const Icon(Icons.add),
@@ -211,49 +156,26 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
         ],
       ),
       body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('medications')
-            .where('userId', isEqualTo: userId)
-            .snapshots(),
+        stream: medicationsQuery.snapshots(),
         builder: (context, snapshot) {
           if (snapshot.hasError) return const Center(child: Text('حدث خطأ في تحميل البيانات'));
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          // ترتيب الأدوية محلياً
-          var docs = snapshot.data!.docs;
+          final docs = snapshot.data?.docs ?? [];
           docs.sort((a, b) {
             final aCreatedAt = (a.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
             final bCreatedAt = (b.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
-            return (bCreatedAt?.toDate() ?? DateTime(1970)).compareTo(aCreatedAt?.toDate() ?? DateTime(1970));
+            return (bCreatedAt?.toDate() ?? DateTime(1970))
+                .compareTo(aCreatedAt?.toDate() ?? DateTime(1970));
           });
 
-          // ✅ إذا كانت قائمة الأدوية فارغة
           if (docs.isEmpty) {
             return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.medication_liquid,
-                    size: 80,
-                    color: Colors.grey[300],
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('لا توجد أدوية مضافة بعد.'),
-                  const SizedBox(height: 8),
-                  // ✅ رسالة مختلفة للمرضى والأطباء
-                  if (!canAddMedications)
-                    Text(
-                      'فقط الأطباء يمكنهم إضافة الأدوية',
-                      style: TextStyle(
-                        color: Colors.grey[500],
-                        fontSize: 12,
-                      ),
-                    ),
-                ],
-              ),
+              child: Text(canAddMedications
+                  ? 'لا توجد أدوية مضافة بعد.'
+                  : 'لا توجد وصفات أدوية واردة من الطبيب حالياً.'),
             );
           }
 
@@ -262,6 +184,8 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
             children: docs.map((doc) {
               final data = doc.data() as Map<String, dynamic>;
               final times = (data['times'] as List<dynamic>? ?? []).cast<String>();
+              final status = (data['status'] ?? 'pending').toString();
+              final createdAt = data['createdAt'] as Timestamp?;
 
               return Card(
                 margin: const EdgeInsets.symmetric(vertical: 8),
@@ -272,13 +196,33 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
                     data['name'] ?? '',
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
-                  subtitle: Text('${data['dose']} • ${data['schedule']}'),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('${data['dose'] ?? ''} • ${data['schedule'] ?? ''}'),
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _statusColor(status).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          _statusText(status),
+                          style: TextStyle(
+                            color: _statusColor(status),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete, color: Colors.redAccent),
                     onPressed: () => _deleteMedication(doc.id),
                   ),
-                  childrenPadding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  childrenPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   children: [
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -286,37 +230,65 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
                         Text('النوع: ${data['type'] ?? ''}'),
                         Text('المدة: ${data['duration'] ?? ''}'),
                         Text('ملاحظات: ${data['notes'] ?? ''}'),
+                        if (status == 'approved')
+                          Text('مدة العلاج: ${_formatRemainingDays(data)}',
+                              style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w700)),
+                        if (createdAt != null)
+                          Text('تم الإنشاء: ${DateFormat('yyyy/MM/dd hh:mm a').format(createdAt.toDate())}'),
                         const SizedBox(height: 8),
                         if (times.isNotEmpty)
-                          const Text('الأوقات المحددة:', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const Text('الأوقات اليومية:', style: TextStyle(fontWeight: FontWeight.bold)),
                         Wrap(
                           spacing: 8,
-                          children: times.map((t) {
-                            final date = DateFormat('hh:mm a').parse(t);
-                            final timeOfDay = TimeOfDay(hour: date.hour, minute: date.minute);
-                            return Chip(label: Text(timeOfDay.format(context)));
-                          }).toList(),
+                          children: times.map((t) => Chip(label: Text(t))).toList(),
                         ),
-                      ],
-                    ),
-                    ButtonBar(
-                      alignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: () async {
-                            final updated = await Navigator.push<bool>(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    MedicationFormScreen(userId: userId!, doc: doc),
+                        const SizedBox(height: 8),
+                        if (!canAddMedications && status == 'pending')
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () => _approveMedication(doc.id),
+                                  icon: const Icon(Icons.check),
+                                  label: const Text('موافقة'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                ),
                               ),
-                            );
-                            if (updated == true) setState(() {});
-                          },
-                          child: const Text('تعديل'),
-                        ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => _rejectMedication(doc.id),
+                                  icon: const Icon(Icons.close),
+                                  label: const Text('رفض'),
+                                  style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                                ),
+                              ),
+                            ],
+                          ),
                       ],
                     ),
+                    if (canAddMedications)
+                      ButtonBar(
+                        alignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () async {
+                              final updated = await Navigator.push<bool>(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      MedicationFormScreen(userId: userId!, doc: doc),
+                                ),
+                              );
+                              if (updated == true) setState(() {});
+                            },
+                            child: const Text('تعديل'),
+                          ),
+                        ],
+                      ),
                   ],
                 ),
               );

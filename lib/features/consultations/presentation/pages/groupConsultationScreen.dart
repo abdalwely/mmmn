@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:convert';
 
 class GroupConsultationScreen extends StatefulWidget {
   const GroupConsultationScreen({super.key});
@@ -207,26 +208,47 @@ class _GroupConsultationScreenState extends State<GroupConsultationScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: List.generate((message['files'] as List).length, (index) {
                     final file = message['files'][index];
-                    final isImage = file['fileType'] == 'image';
+                    final fileType = (file['fileType'] ?? '').toString();
+                    final isImage = fileType == 'image' || fileType == 'image_inline';
+                    final fileUrl = (file['fileUrl'] ?? '').toString();
+                    final fileBase64 = (file['fileBase64'] ?? '').toString();
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 8.0),
                       child: isImage
                           ? GestureDetector(
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ImagePreviewScreen(imageUrl: file['fileUrl']),
-                          ),
-                        ),
+                        onTap: fileUrl.isNotEmpty
+                            ? () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ImagePreviewScreen(imageUrl: fileUrl),
+                                  ),
+                                )
+                            : null,
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: Image.network(file['fileUrl'], height: 150, width: double.infinity, fit: BoxFit.cover),
+                          child: fileUrl.isNotEmpty
+                              ? Image.network(
+                                  fileUrl,
+                                  height: 150,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                )
+                              : Image.memory(
+                                  base64Decode(fileBase64),
+                                  height: 150,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                ),
                         ),
                       )
                           : InkWell(
-                        onTap: () => _openFile(file['fileUrl']),
+                        onTap: fileUrl.isNotEmpty ? () => _openFile(fileUrl) : null,
                         child: Row(
-                          children: const [Icon(Icons.attach_file), SizedBox(width: 5), Text("ملف مرفق")],
+                          children: [
+                            const Icon(Icons.attach_file),
+                            const SizedBox(width: 5),
+                            Text(file['fileName'] ?? "ملف مرفق"),
+                          ],
                         ),
                       ),
                     );
@@ -303,14 +325,24 @@ class _GroupConsultationScreenState extends State<GroupConsultationScreen> {
     List<Map<String, String>> files = [];
 
     for (final file in _selectedFiles) {
-      final ref = _storage.ref().child('group_files/${DateTime.now().millisecondsSinceEpoch}_${file.name}');
-      await ref.putData(file.bytes!);
-      final url = await ref.getDownloadURL();
       final isImage = file.extension?.toLowerCase() == 'jpg' || file.extension?.toLowerCase() == 'png';
-      files.add({
-        'fileUrl': url,
-        'fileType': isImage ? 'image' : 'file',
-      });
+      try {
+        final ref =
+            _storage.ref().child('group_files/${DateTime.now().millisecondsSinceEpoch}_${file.name}');
+        await ref.putData(file.bytes!);
+        final url = await ref.getDownloadURL();
+        files.add({
+          'fileUrl': url,
+          'fileType': isImage ? 'image' : 'file',
+          'fileName': file.name,
+        });
+      } catch (_) {
+        files.add({
+          'fileType': isImage ? 'image_inline' : 'file_inline',
+          'fileBase64': base64Encode(file.bytes!),
+          'fileName': file.name,
+        });
+      }
     }
 
     final msg = {

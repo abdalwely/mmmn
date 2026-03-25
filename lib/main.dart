@@ -21,6 +21,9 @@ import 'package:digl/services/medication_service.dart';
 import 'package:digl/services/notification_service.dart';
 import 'package:digl/services/internet_checker_service.dart';
 import 'package:digl/services/advanced_medication_reminder_service.dart';
+import 'package:digl/services/patient_medication_reminder_service.dart';
+import 'package:digl/services/local_in_app_notification_service.dart';
+import 'package:digl/services/chat_realtime_notification_service.dart';
 import 'package:digl/services/enhanced_incoming_call_service.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
@@ -42,6 +45,7 @@ import 'features/admin/presentation/pages/admin_login_screen.dart';
 import 'features/auth/presentation/pages/verification_pending_screen.dart';
 import 'features/doctor/presentation/pages/doctor_dashboard_screen.dart';
 import 'features/medications/presentation/pages/medication_reminder_screen.dart';
+import 'features/medications/presentation/pages/medication_details_screen.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 FlutterLocalNotificationsPlugin();
@@ -106,6 +110,9 @@ Future<void> main() async {
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
   await initializeNotifications();
+  await LocalInAppNotificationService.initialize();
+  LocalInAppNotificationService.setNavigatorKey(navigatorKey);
+  ChatRealtimeNotificationService().start();
 
   final notificationService = NotificationService();
   await notificationService.initialize();
@@ -119,6 +126,8 @@ Future<void> main() async {
   await Hive.initFlutter();
 
   await AdvancedMedicationReminderService.initialize();
+  await PatientMedicationReminderService.initialize();
+  await PatientMedicationReminderService.rescheduleApprovedForCurrentPatient();
 
   await AdminSetupService.ensureAdminExists();
 

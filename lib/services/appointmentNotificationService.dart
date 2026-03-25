@@ -1,50 +1,81 @@
 // lib/services/appointment_notification_service.dart
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:timezone/timezone.dart' as tz;
 import 'package:intl/intl.dart';
+import 'package:timezone/data/latest_all.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
+
+import 'local_in_app_notification_service.dart';
 
 class AppointmentNotificationService {
   static final AppointmentNotificationService _instance =
-  AppointmentNotificationService._internal();
+      AppointmentNotificationService._internal();
 
   factory AppointmentNotificationService() => _instance;
   AppointmentNotificationService._internal();
 
   final FlutterLocalNotificationsPlugin _notifications =
-  FlutterLocalNotificationsPlugin();
+      FlutterLocalNotificationsPlugin();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  StreamSubscription<User?>? _authSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _appointmentsSub;
+
   Future<void> initialize() async {
-    final AndroidNotificationChannel appointmentChannel =
-    AndroidNotificationChannel(
+    tz_data.initializeTimeZones();
+
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosSettings = DarwinInitializationSettings(
+      defaultPresentAlert: true,
+      defaultPresentBadge: true,
+      defaultPresentSound: true,
+    );
+
+    await _notifications.initialize(
+      const InitializationSettings(android: androidSettings, iOS: iosSettings),
+    );
+
+    final AndroidNotificationChannel appointmentChannel = AndroidNotificationChannel(
       'appointment_channel',
       'تنبيهات المواعيد',
       description: 'إشعارات تذكير بمواعيد العيادة',
       importance: Importance.high,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('notification'),
       enableVibration: true,
       vibrationPattern: Int64List.fromList([0, 250, 250, 250]),
     );
 
     await _notifications
         .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>()
+            AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(appointmentChannel);
+
+    await LocalInAppNotificationService.initialize();
+
+    _authSub?.cancel();
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+      _appointmentsSub?.cancel();
+      if (user != null) {
+        listenToUserAppointments(user.uid);
+      }
+    });
+
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null) {
+      listenToUserAppointments(currentUser.uid);
+    }
 
     debugPrint('✅ تم تهيئة قناة إشعارات المواعيد');
   }
 
   Future<void> scheduleAppointmentReminders(String appointmentId) async {
-    final appointmentDoc = await _firestore
-        .collection('appointments')
-        .doc(appointmentId)
-        .get();
+    final appointmentDoc =
+        await _firestore.collection('appointments').doc(appointmentId).get();
 
     if (!appointmentDoc.exists) return;
 
@@ -53,28 +84,28 @@ class AppointmentNotificationService {
     final String doctorName = data['doctorName'] ?? 'الطبيب';
     final String location = data['workplace'] ?? 'العيادة';
 
-    // إشعار قبل الموعد بيوم
     await _scheduleSingleReminder(
       id: appointmentId.hashCode + 1,
       title: 'تذكير بالموعد غداً',
       body: 'لديك موعد غداً مع د. $doctorName في $location',
       scheduledDate: appointmentDate.subtract(const Duration(days: 1)),
+      dedupeKey: 'appointment-$appointmentId-1day',
     );
 
-    // إشعار قبل الموعد بـ 6 ساعات
     await _scheduleSingleReminder(
       id: appointmentId.hashCode + 2,
       title: 'تذكير بالموعد بعد 6 ساعات',
       body: 'لديك موعد بعد 6 ساعات مع د. $doctorName',
       scheduledDate: appointmentDate.subtract(const Duration(hours: 6)),
+      dedupeKey: 'appointment-$appointmentId-6hours',
     );
 
-    // إشعار قبل الموعد بساعة
     await _scheduleSingleReminder(
       id: appointmentId.hashCode + 3,
       title: 'تذكير بالموعد بعد ساعة',
       body: 'لديك موعد بعد ساعة مع د. $doctorName في $location',
       scheduledDate: appointmentDate.subtract(const Duration(hours: 1)),
+      dedupeKey: 'appointment-$appointmentId-1hour',
     );
 
     await _firestore.collection('appointments').doc(appointmentId).update({
@@ -82,8 +113,20 @@ class AppointmentNotificationService {
         '1day': true,
         '6hours': true,
         '1hour': true,
-      }
+      },
+      'reminderScheduled': true,
+      'reminderScheduledAt': FieldValue.serverTimestamp(),
     });
+
+    await LocalInAppNotificationService.storeNotification(
+      title: 'تم تفعيل تذكيرات الموعد',
+      body:
+          'تم ضبط تذكيرات الموعد (${DateFormat('yyyy/MM/dd hh:mm a').format(appointmentDate)}).',
+      type: 'appointment_schedule',
+      dedupeKey: 'appointment-schedule-$appointmentId',
+      channelId: 'appointment_channel',
+      payload: {'appointmentId': appointmentId},
+    );
   }
 
   Future<void> _scheduleSingleReminder({
@@ -91,10 +134,11 @@ class AppointmentNotificationService {
     required String title,
     required String body,
     required DateTime scheduledDate,
+    required String dedupeKey,
   }) async {
     try {
       final tz.TZDateTime scheduledTzDate =
-      tz.TZDateTime.from(scheduledDate, tz.local);
+          tz.TZDateTime.from(scheduledDate, tz.local);
 
       if (scheduledTzDate.isBefore(tz.TZDateTime.now(tz.local))) {
         debugPrint('⚠️ الوقت المجدول في الماضي، تخطي الإشعار');
@@ -110,9 +154,10 @@ class AppointmentNotificationService {
           priority: Priority.high,
           playSound: true,
           enableVibration: true,
-          color: Color(0xFF2196F3),
+          color: const Color(0xFF2196F3),
+          audioAttributesUsage: AudioAttributesUsage.alarm,
         ),
-        iOS: DarwinNotificationDetails(
+        iOS: const DarwinNotificationDetails(
           sound: 'notification.caf',
           presentAlert: true,
           presentBadge: true,
@@ -127,8 +172,16 @@ class AppointmentNotificationService {
         scheduledTzDate,
         notificationDetails,
         uiLocalNotificationDateInterpretation:
-        UILocalNotificationDateInterpretation.absoluteTime,
+            UILocalNotificationDateInterpretation.absoluteTime,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      );
+
+      await LocalInAppNotificationService.storeNotification(
+        title: 'تمت جدولة تذكير موعد',
+        body: '$title - $body',
+        type: 'appointment_schedule',
+        dedupeKey: dedupeKey,
+        channelId: 'appointment_channel',
       );
 
       debugPrint('✅ تم جدولة إشعار الموعد برقم $id');
@@ -138,17 +191,23 @@ class AppointmentNotificationService {
   }
 
   void listenToUserAppointments(String userId) {
-    _firestore
+    _appointmentsSub?.cancel();
+    _appointmentsSub = _firestore
         .collection('appointments')
         .where('userId', isEqualTo: userId)
         .snapshots()
         .listen((snapshot) {
-      for (var doc in snapshot.docChanges) {
-        if (doc.type == DocumentChangeType.added) {
-          final status = doc.doc.data()?['status'];
-          if (status == 'pending' || status == 'confirmed') {
-            scheduleAppointmentReminders(doc.doc.id);
-          }
+      for (var change in snapshot.docChanges) {
+        final data = change.doc.data();
+        if (data == null) continue;
+        final status = (data['status'] ?? '').toString();
+        final alreadyScheduled = data['reminderScheduled'] == true;
+
+        if ((change.type == DocumentChangeType.added ||
+                change.type == DocumentChangeType.modified) &&
+            !alreadyScheduled &&
+            (status == 'pending' || status == 'confirmed')) {
+          scheduleAppointmentReminders(change.doc.id);
         }
       }
     });
