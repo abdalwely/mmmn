@@ -35,7 +35,6 @@ class PatientMedicationReminderService {
 
   static Future<void> initialize() async {
     tz_data.initializeTimeZones();
-    tz.setLocalLocation(tz.local);
 
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings();
@@ -100,10 +99,10 @@ class PatientMedicationReminderService {
     await LocalInAppNotificationService.showAndStore(
       id: medicationId.hashCode & 0x7fffffff,
       title: 'تم تفعيل تذكيرات الدواء',
-      body: 'تمت موافقتك على الدواء وسيعمل المنبه يومياً حسب الأوقات المحددة.',
+      body: 'تمت موافقتك على الدواء وسيعمل المنبه حسب المواعيد المحددة.',
       type: 'medication',
       channelId: 'medication_channel',
-      payload: {'medicationId': medicationId, 'action': 'approved'},
+      payload: {'medicationId': medicationId, 'type': 'medication'},
       dedupeKey: 'approve-$medicationId',
     );
   }
@@ -162,6 +161,7 @@ class PatientMedicationReminderService {
 
     final medicationName = (data['name'] ?? 'دواء').toString();
     final instructions = (data['schedule'] ?? data['dose'] ?? '').toString();
+    final durationDays = _parseDurationDays(data['duration']?.toString());
 
     final oldIds = (data['scheduledNotificationIds'] as List<dynamic>? ?? [])
         .map((e) => e as int)
@@ -171,53 +171,65 @@ class PatientMedicationReminderService {
     }
 
     final ids = <int>[];
-    for (int index = 0; index < times.length; index++) {
-      final parts = times[index].split(':');
-      if (parts.length != 2) continue;
-      final hour = int.tryParse(parts[0]);
-      final minute = int.tryParse(parts[1]);
-      if (hour == null || minute == null) continue;
+    final now = tz.TZDateTime.now(tz.local);
 
-      final id = _buildReminderId(medicationId, index);
-      ids.add(id);
+    for (int day = 0; day < durationDays; day++) {
+      for (int index = 0; index < times.length; index++) {
+        final parts = times[index].split(':');
+        if (parts.length != 2) continue;
+        final hour = int.tryParse(parts[0]);
+        final minute = int.tryParse(parts[1]);
+        if (hour == null || minute == null) continue;
 
-      final now = tz.TZDateTime.now(tz.local);
-      var next = tz.TZDateTime(
-        tz.local,
-        now.year,
-        now.month,
-        now.day,
-        hour,
-        minute,
-      );
-      if (next.isBefore(now)) {
-        next = next.add(const Duration(days: 1));
+        final id = _buildReminderId(medicationId, day, index);
+        ids.add(id);
+
+        final scheduled = tz.TZDateTime(
+          tz.local,
+          now.year,
+          now.month,
+          now.day + day,
+          hour,
+          minute,
+        );
+
+        if (scheduled.isBefore(now)) {
+          continue;
+        }
+
+        await _notifications.zonedSchedule(
+          id,
+          '⏰ موعد الدواء',
+          '$medicationName\n$instructions',
+          scheduled,
+          const NotificationDetails(android: _androidDetails, iOS: _iosDetails),
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          payload:
+              '{"type":"medication","medicationId":"$medicationId","day":$day,"time":"${times[index]}"}',
+        );
       }
-
-      await _notifications.zonedSchedule(
-        id,
-        '⏰ تذكير الدواء',
-        'حان الآن موعد $medicationName\n$instructions',
-        next,
-        const NotificationDetails(android: _androidDetails, iOS: _iosDetails),
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        matchDateTimeComponents: DateTimeComponents.time,
-        payload: medicationId,
-      );
     }
 
     await doc.reference.update({
       'scheduledNotificationIds': ids,
       'lastScheduledAt': FieldValue.serverTimestamp(),
+      'durationDays': durationDays,
+      'activeUntil': Timestamp.fromDate(
+        DateTime.now().add(Duration(days: durationDays)),
+      ),
     });
 
     await LocalInAppNotificationService.storeNotification(
       title: 'تمت جدولة منبهات الدواء',
-      body: 'تمت جدولة ${ids.length} منبه(ات) يومية لدواء $medicationName.',
+      body: 'تمت جدولة ${ids.length} منبه خلال $durationDays يوم.',
       type: 'medication_schedule',
-      payload: {'medicationId': medicationId, 'times24': times},
+      payload: {
+        'medicationId': medicationId,
+        'times24': times,
+        'durationDays': durationDays,
+      },
       dedupeKey: 'schedule-$medicationId-${times.join('-')}',
       channelId: 'medication_channel',
     );
@@ -254,8 +266,14 @@ class PatientMedicationReminderService {
     );
   }
 
-  static int _buildReminderId(String medicationId, int index) {
-    return ('$medicationId-$index').hashCode & 0x7fffffff;
+  static int _parseDurationDays(String? duration) {
+    if (duration == null || duration.isEmpty) return 30;
+    final digits = RegExp(r'\d+').firstMatch(duration)?.group(0);
+    return int.tryParse(digits ?? '') ?? 30;
+  }
+
+  static int _buildReminderId(String medicationId, int day, int timeIndex) {
+    return ('$medicationId-$day-$timeIndex').hashCode & 0x7fffffff;
   }
 
   static String formatTime24(TimeOfDay time) {

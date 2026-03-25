@@ -45,6 +45,7 @@ import 'features/admin/presentation/pages/admin_login_screen.dart';
 import 'features/auth/presentation/pages/verification_pending_screen.dart';
 import 'features/doctor/presentation/pages/doctor_dashboard_screen.dart';
 import 'features/medications/presentation/pages/medication_reminder_screen.dart';
+import 'features/medications/presentation/pages/medication_details_screen.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 FlutterLocalNotificationsPlugin();
@@ -110,6 +111,7 @@ Future<void> main() async {
 
   await initializeNotifications();
   await LocalInAppNotificationService.initialize();
+  LocalInAppNotificationService.setNavigatorKey(navigatorKey);
   ChatRealtimeNotificationService().start();
 
   final notificationService = NotificationService();

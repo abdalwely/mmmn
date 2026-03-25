@@ -66,6 +66,12 @@ class ChatRealtimeNotificationService {
     if (_seenMessageKeys.contains(messageKey)) return;
     _seenMessageKeys.add(messageKey);
 
+    final consultationDoc = await FirebaseFirestore.instance
+        .collection('consultations')
+        .doc(consultationId)
+        .get();
+    final consultation = consultationDoc.data() ?? {};
+
     final senderName = (message['senderName'] ?? 'رسالة جديدة').toString();
     final text = (message['text'] ?? '').toString();
     final messageType = (message['type'] ?? 'text').toString();
@@ -86,6 +92,11 @@ class ChatRealtimeNotificationService {
         'consultationId': consultationId,
         'messageId': messageDoc.id,
         'type': 'message',
+        'doctorId': consultation['doctorId'] ?? '',
+        'userId': consultation['userId'] ?? '',
+        'doctorName': consultation['doctorName'] ?? '',
+        'patientName': consultation['userName'] ?? '',
+        'isDoctor': consultation['doctorId'] == userId,
       },
       dedupeKey: 'chat-$messageKey',
     );

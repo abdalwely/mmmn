@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class LocalInAppNotificationService {
@@ -12,6 +13,16 @@ class LocalInAppNotificationService {
       FlutterLocalNotificationsPlugin();
   static bool _initialized = false;
   static final Set<String> _dedupeCache = <String>{};
+  static GlobalKey<NavigatorState>? _navigatorKey;
+
+  static void setNavigatorKey(GlobalKey<NavigatorState> navigatorKey) {
+    _navigatorKey = navigatorKey;
+  }
+
+  @pragma('vm:entry-point')
+  static void _onBackgroundTap(NotificationResponse response) {
+    // background tap entry point
+  }
 
   static Future<void> initialize() async {
     if (_initialized) return;
@@ -28,6 +39,8 @@ class LocalInAppNotificationService {
 
     await _plugin.initialize(
       const InitializationSettings(android: android, iOS: ios),
+      onDidReceiveNotificationResponse: _handleNotificationTap,
+      onDidReceiveBackgroundNotificationResponse: _onBackgroundTap,
     );
 
     final androidImpl =
@@ -40,6 +53,41 @@ class LocalInAppNotificationService {
     await _createChannels(androidImpl);
 
     _initialized = true;
+  }
+
+  static void _handleNotificationTap(NotificationResponse response) {
+    if (_navigatorKey?.currentState == null) return;
+
+    final payload = response.payload;
+    if (payload == null || payload.isEmpty) return;
+
+    try {
+      final data = jsonDecode(payload) as Map<String, dynamic>;
+      final type = (data['type'] ?? '').toString();
+      final medicationId = data['medicationId']?.toString();
+      final consultationId = data['consultationId']?.toString();
+
+      if (medicationId != null && medicationId.isNotEmpty) {
+        _navigatorKey!.currentState!.pushNamed(
+          '/medication_details',
+          arguments: medicationId,
+        );
+        return;
+      }
+
+      if (type == 'message' && consultationId != null && consultationId.isNotEmpty) {
+        _navigatorKey!.currentState!.pushNamed('/consultation', arguments: {
+          'consultationId': consultationId,
+          'doctorId': data['doctorId'] ?? '',
+          'userId': data['userId'] ?? '',
+          'doctorName': data['doctorName'] ?? '',
+          'patientName': data['patientName'] ?? '',
+          'isDoctor': data['isDoctor'] ?? false,
+        });
+      }
+    } catch (_) {
+      // ignore malformed payload
+    }
   }
 
   static Future<void> _createChannels(
@@ -139,8 +187,9 @@ class LocalInAppNotificationService {
               ? AndroidNotificationCategory.call
               : AndroidNotificationCategory.reminder,
           fullScreenIntent: fullScreen,
-          audioAttributesUsage:
-              fullScreen ? AudioAttributesUsage.alarm : AudioAttributesUsage.notification,
+          audioAttributesUsage: fullScreen
+              ? AudioAttributesUsage.alarm
+              : AudioAttributesUsage.notification,
         ),
         iOS: const DarwinNotificationDetails(
           presentAlert: true,
@@ -185,6 +234,7 @@ class LocalInAppNotificationService {
       'channelId': channelId,
       'payload': payload,
       'isRead': false,
+      'isViewed': false,
       'createdAt': FieldValue.serverTimestamp(),
       'createdAtClient': Timestamp.now(),
       'notificationId': notificationId,

@@ -86,6 +86,22 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
     }
   }
 
+
+
+  int _remainingDays(Map<String, dynamic> data) {
+    final durationRaw = data['durationDays']?.toString() ?? data['duration']?.toString() ?? '30';
+    final days = int.tryParse(RegExp(r'\d+').firstMatch(durationRaw)?.group(0) ?? '30') ?? 30;
+    final approvedAt = data['approvedAt'] as Timestamp?;
+    final start = approvedAt?.toDate() ?? DateTime.now();
+    final end = start.add(Duration(days: days));
+    final left = end.difference(DateTime.now()).inDays;
+    return left < 0 ? 0 : left;
+  }
+
+  String _formatRemainingDays(Map<String, dynamic> data) {
+    final d = _remainingDays(data);
+    return d == 0 ? 'انتهت المدة' : 'متبقي $d يوم';
+  }
   Color _statusColor(String status) {
     switch (status) {
       case 'approved':
@@ -202,12 +218,10 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
                       ),
                     ],
                   ),
-                  trailing: canAddMedications
-                      ? IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.redAccent),
-                          onPressed: () => _deleteMedication(doc.id),
-                        )
-                      : null,
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.redAccent),
+                    onPressed: () => _deleteMedication(doc.id),
+                  ),
                   childrenPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   children: [
                     Column(
@@ -216,6 +230,9 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
                         Text('النوع: ${data['type'] ?? ''}'),
                         Text('المدة: ${data['duration'] ?? ''}'),
                         Text('ملاحظات: ${data['notes'] ?? ''}'),
+                        if (status == 'approved')
+                          Text('مدة العلاج: ${_formatRemainingDays(data)}',
+                              style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w700)),
                         if (createdAt != null)
                           Text('تم الإنشاء: ${DateFormat('yyyy/MM/dd hh:mm a').format(createdAt.toDate())}'),
                         const SizedBox(height: 8),
