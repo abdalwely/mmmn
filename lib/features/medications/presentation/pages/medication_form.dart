@@ -1,13 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:digl/services/advanced_medication_reminder_service.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:digl/services/patient_medication_reminder_service.dart';
 
 class MedicationFormScreen extends StatefulWidget {
   final String userId;
-  final String? patientId; // المريض المرتبط بالدواء
-  final String? consultationId; // الاستشارة المرتبطة
+  final String? patientId;
+  final String? consultationId;
   final DocumentSnapshot? doc;
 
   const MedicationFormScreen({
@@ -49,17 +48,45 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
     durationController = TextEditingController(text: data?['duration'] ?? '');
     typeController = TextEditingController(text: data?['type'] ?? '');
 
-    selectedTimes = data?['times'] != null
-        ? List<String>.from(data!['times']).map((t) {
-      final date = DateFormat('hh:mm a').parse(t);
-      return TimeOfDay(hour: date.hour, minute: date.minute);
-    }).toList()
-        : [];
-
-    // تحميل البيانات المرتبطة
-    selectedPatientId = widget.patientId ?? (data?['patientId'] ?? '');
-    selectedConsultationId = widget.consultationId ?? (data?['consultationId'] ?? '');
+    selectedTimes = _readTimesFromDocument(data);
+    selectedPatientId = widget.patientId ?? (data?['patientId']?.toString() ?? '');
+    selectedConsultationId =
+        widget.consultationId ?? (data?['consultationId']?.toString() ?? '');
     enableReminders = data?['enableReminders'] as bool? ?? true;
+  }
+
+  List<TimeOfDay> _readTimesFromDocument(Map<String, dynamic>? data) {
+    final raw24 = (data?['times24'] as List<dynamic>? ?? [])
+        .map((e) => e.toString())
+        .toList();
+
+    if (raw24.isNotEmpty) {
+      return raw24.map(_parse24HourTime).whereType<TimeOfDay>().toList();
+    }
+
+    final raw12 = (data?['times'] as List<dynamic>? ?? [])
+        .map((e) => e.toString())
+        .toList();
+
+    return raw12.map(_parse12HourTime).whereType<TimeOfDay>().toList();
+  }
+
+  TimeOfDay? _parse24HourTime(String value) {
+    final parts = value.split(':');
+    if (parts.length != 2) return null;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) return null;
+    return TimeOfDay(hour: hour, minute: minute);
+  }
+
+  TimeOfDay? _parse12HourTime(String value) {
+    try {
+      final date = DateFormat('hh:mm a').parse(value);
+      return TimeOfDay(hour: date.hour, minute: date.minute);
+    } catch (_) {
+      return null;
+    }
   }
 
   String formatTimeOfDayTo12Hour(TimeOfDay time) {
@@ -95,57 +122,75 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     final medicationName = nameController.text.trim();
-    final medicationTimes = selectedTimes.map((t) => formatTimeOfDayTo12Hour(t)).toList();
+    final medicationTimes12 =
+        selectedTimes.map((t) => formatTimeOfDayTo12Hour(t)).toList();
+    final medicationTimes24 =
+        selectedTimes.map(PatientMedicationReminderService.formatTime24).toList();
+
+    if (selectedPatientId == null || selectedPatientId!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى اختيار المريض قبل الحفظ.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (medicationTimes24.isEmpty && enableReminders) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى إضافة وقت واحد على الأقل للتذكير.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
     final medicationData = {
       'name': medicationName,
       'dose': doseController.text.trim(),
       'schedule': scheduleController.text.trim(),
-      'userId': widget.userId, // الطبيب الذي أضاف الدواء
-      'patientId': selectedPatientId, // المريض المرتبط
-      'consultationId': selectedConsultationId, // الاستشارة المرتبطة
-      'createdAt': FieldValue.serverTimestamp(),
+      'doctorId': widget.userId,
+      'userId': widget.userId,
+      'patientId': selectedPatientId,
+      'consultationId': selectedConsultationId,
       'notes': notesController.text.trim(),
       'duration': durationController.text.trim(),
       'type': typeController.text.trim(),
-      'times': medicationTimes,
+      'times': medicationTimes12,
+      'times24': medicationTimes24,
       'enableReminders': enableReminders,
       'history': widget.doc?.get('history') ?? [],
+      'status': enableReminders ? 'pending' : 'approved',
+      'updatedAt': FieldValue.serverTimestamp(),
+      'scheduledNotificationIds': [],
     };
 
     try {
-      String medicationId;
-
       if (widget.doc != null) {
-        // تحديث الدواء
         await widget.doc!.reference.update(medicationData);
-        medicationId = widget.doc!.id;
+        if (enableReminders) {
+          await PatientMedicationReminderService.cancelMedicationReminders(
+            widget.doc!.id,
+          );
+        }
       } else {
-        // إضافة دواء جديد
-        final docRef = await FirebaseFirestore.instance
-            .collection('medications')
-            .add(medicationData);
-        medicationId = docRef.id;
-      }
-
-      // ✅ تفعيل الإشعارات إذا كانت مفعلة
-      if (enableReminders && medicationTimes.isNotEmpty && selectedPatientId != null) {
-        await _scheduleReminderNotifications(
-          medicationId: medicationId,
-          medicationName: medicationName,
-          patientId: selectedPatientId!,
-          times: medicationTimes,
-          durationDays: int.tryParse(durationController.text) ?? 30,
-        );
+        await FirebaseFirestore.instance.collection('medications').add({
+          ...medicationData,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
       }
 
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✅ تم حفظ الدواء بنجاح'),
+        SnackBar(
+          content: Text(enableReminders
+              ? '✅ تم إرسال الدواء للمريض بانتظار الموافقة.'
+              : '✅ تم حفظ الدواء بنجاح.'),
           backgroundColor: Colors.green,
-          duration: Duration(seconds: 2),
+          duration: const Duration(seconds: 2),
         ),
       );
 
@@ -159,28 +204,6 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
           duration: const Duration(seconds: 3),
         ),
       );
-    }
-  }
-
-  /// جدولة إشعارات الأدوية
-  Future<void> _scheduleReminderNotifications({
-    required String medicationId,
-    required String medicationName,
-    required String patientId,
-    required List<String> times,
-    required int durationDays,
-  }) async {
-    try {
-      await AdvancedMedicationReminderService.scheduleMedicationReminders(
-        medicationId: medicationId,
-        medicationName: medicationName,
-        times: times,
-        durationDays: durationDays,
-      );
-
-      debugPrint('✅ تم جدولة إشعارات الدواء بنجاح للمريض: $patientId');
-    } catch (e) {
-      debugPrint('⚠️ خطأ في جدولة الإشعارات: $e');
     }
   }
 
@@ -224,13 +247,13 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
           key: _formKey,
           child: ListView(
             children: [
-              // معلومات الدواء الأساسية
               _buildSectionHeader('معلومات الدواء'),
               _buildInputField(
                 controller: nameController,
                 label: 'اسم الدواء',
                 icon: Icons.medical_services,
-                validator: (v) => v == null || v.isEmpty ? 'يرجى إدخال اسم الدواء' : null,
+                validator: (v) =>
+                    v == null || v.isEmpty ? 'يرجى إدخال اسم الدواء' : null,
               ),
               _buildInputField(
                 controller: doseController,
@@ -239,7 +262,7 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
               ),
               _buildInputField(
                 controller: scheduleController,
-                label: 'جدول الجرعات',
+                label: 'تعليمات الدواء',
                 icon: Icons.schedule,
               ),
               _buildInputField(
@@ -257,12 +280,9 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
                 label: 'ملاحظات الطبيب',
                 icon: Icons.note_alt,
               ),
-
               const SizedBox(height: 24),
-
-              // أوقات الجرعات
               _buildSectionHeader('أوقات تناول الدواء'),
-              const Text('اختر أوقات تناول الدواء:'),
+              const Text('يمكن إضافة أكثر من وقت يوميًا (مثل 08:00، 14:00، 21:00).'),
               Wrap(
                 spacing: 8,
                 children: selectedTimes.map((time) {
@@ -281,22 +301,17 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
                 label: const Text('إضافة وقت'),
                 onPressed: _selectTime,
               ),
-
               const SizedBox(height: 24),
-
-              // ربط المريض والاستشارة
               _buildSectionHeader('ربط الدواء'),
               _buildPatientSelector(),
               const SizedBox(height: 16),
               _buildConsultationSelector(),
-
               const SizedBox(height: 24),
-
-              // خيار الإشعارات
               _buildSectionHeader('الإشعارات'),
               CheckboxListTile(
-                title: const Text('تفعيل إشعارات التذكير'),
-                subtitle: const Text('تذكيرات يومية في أوقات الجرعات'),
+                title: const Text('يتطلب موافقة المريض قبل التفعيل'),
+                subtitle: const Text(
+                    'عند التفعيل سيتم إنشاء طلب pending، ولا يتم جدولة المنبه إلا بعد موافقة المريض.'),
                 value: enableReminders,
                 onChanged: (value) {
                   setState(() {
@@ -305,10 +320,7 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
                 },
                 controlAffinity: ListTileControlAffinity.trailing,
               ),
-
               const SizedBox(height: 32),
-
-              // أزرار الحفظ والإلغاء
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -329,7 +341,6 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
     );
   }
 
-  /// رأس القسم
   Widget _buildSectionHeader(String title) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16, top: 8),
@@ -344,7 +355,6 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
     );
   }
 
-  /// اختيار المريض
   Widget _buildPatientSelector() {
     return FutureBuilder<QuerySnapshot>(
       future: FirebaseFirestore.instance
@@ -383,7 +393,6 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
     );
   }
 
-  /// اختيار الاستشارة
   Widget _buildConsultationSelector() {
     if (selectedPatientId == null || selectedPatientId!.isEmpty) {
       return const Text(
@@ -412,7 +421,8 @@ class _MedicationFormScreenState extends State<MedicationFormScreen> {
         }
 
         return DropdownButtonFormField<String>(
-          value: selectedConsultationId?.isNotEmpty == true ? selectedConsultationId : null,
+          value:
+              selectedConsultationId?.isNotEmpty == true ? selectedConsultationId : null,
           hint: const Text('اختر الاستشارة (اختياري)'),
           items: consultations.map((doc) {
             final data = doc.data() as Map<String, dynamic>;

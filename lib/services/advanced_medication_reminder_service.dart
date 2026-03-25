@@ -121,7 +121,6 @@ class AdvancedMedicationReminderService {
                 priority: Priority.high,
                 playSound: true,
                 enableVibration: true,
-                sound: RawResourceAndroidNotificationSound('notification'),
               ),
               iOS: DarwinNotificationDetails(
                 sound: 'notification.caf',

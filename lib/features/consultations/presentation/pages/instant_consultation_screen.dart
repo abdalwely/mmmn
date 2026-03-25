@@ -598,6 +598,7 @@ class _InstantConsultationScreenState extends State<InstantConsultationScreen> {
           title: 'استشارة جديدة',
           body: 'لديك استشارة جديدة من ${userData['fullName'] ?? user.displayName}',
           consultationId: consultationRef.id,
+          recipientUserId: doctor.uid,
         );
       }
 
@@ -632,14 +633,17 @@ class _InstantConsultationScreenState extends State<InstantConsultationScreen> {
     required String title,
     required String body,
     required String consultationId,
+    required String recipientUserId,
   }) async {
     await _firestore.collection('notifications').add({
       'to': token,
+      'userId': recipientUserId,
       'title': title,
       'body': body,
       'consultationId': consultationId,
       'createdAt': FieldValue.serverTimestamp(),
       'isRead': false,
+      'type': 'message',
     });
   }
 }
