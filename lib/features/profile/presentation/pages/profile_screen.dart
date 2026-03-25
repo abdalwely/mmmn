@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:digl/features/settings/presentation/pages/settings_screen.dart';
 
 import '../../../appointments/presentation/pages/appointments_list_screen.dart';
+import '../../../medications/presentation/pages/medication_form.dart';
 import 'edit_profile_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -198,6 +199,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     MaterialPageRoute(builder: (context) => const AppointmentsListScreen()),
                   ),
                 ),
+                if (isDoctor && userId != null)
+                  _modernOptionTile(
+                    context,
+                    icon: Icons.medication_rounded,
+                    title: 'إضافة دواء للمريض',
+                    subtitle: 'إنشاء وصفة دوائية جديدة وإرسالها للمريض',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => MedicationFormScreen(userId: userId!),
+                      ),
+                    ),
+                  ),
                 _modernOptionTile(
                   context,
                   icon: Icons.support_agent_rounded,
