@@ -54,7 +54,6 @@ class EnhancedNotificationsService {
         description: 'إشعارات تذكير بمواعيد العيادة والاستشارات',
         importance: Importance.high,
         playSound: true,
-        sound: RawResourceAndroidNotificationSound('notification'),
         enableVibration: true,
         vibrationPattern: Int64List.fromList([0, 250, 250, 250]),
       );
@@ -67,20 +66,18 @@ class EnhancedNotificationsService {
         description: 'إشعارات تذكير بمواعيد تناول الأدوية',
         importance: Importance.high,
         playSound: true,
-        sound: RawResourceAndroidNotificationSound('notification'),
         enableVibration: true,
         vibrationPattern: Int64List.fromList([0, 200, 200, 200]),
       );
 
       // قناة المكالمات
       final AndroidNotificationChannel callChannel =
-      AndroidNotificationChannel(
+          AndroidNotificationChannel(
         'call_channel',
         'إشعارات المكالمات',
         description: 'إشعارات المكالمات الواردة والرسائل الفورية',
         importance: Importance.max,
         playSound: true,
-        sound: RawResourceAndroidNotificationSound('call'),
         enableVibration: true,
         vibrationPattern: Int64List.fromList([0, 500, 200, 500]),
       );

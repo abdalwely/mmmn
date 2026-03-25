@@ -69,7 +69,6 @@ class CallMessageNotificationService {
       description: 'إشعارات المكالمات الفيديو والاستشارات',
       importance: Importance.max,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('call'),
       enableVibration: true,
     );
 
@@ -80,7 +79,6 @@ class CallMessageNotificationService {
       description: 'إشعارات الرسائل والاستشارات',
       importance: Importance.high,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('message'),
       enableVibration: true,
     );
 

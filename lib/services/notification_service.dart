@@ -93,7 +93,6 @@ class NotificationService {
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('call'),
       enableVibration: true,
       fullScreenIntent: true,
       color: Color(0xFF2196F3),
@@ -130,7 +129,6 @@ class NotificationService {
       importance: Importance.high,
       priority: Priority.high,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('message'),
       enableVibration: true,
     );
 

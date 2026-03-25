@@ -46,7 +46,6 @@ class AppointmentNotificationService {
       description: 'إشعارات تذكير بمواعيد العيادة',
       importance: Importance.high,
       playSound: true,
-      sound: const RawResourceAndroidNotificationSound('notification'),
       enableVibration: true,
       vibrationPattern: Int64List.fromList([0, 250, 250, 250]),
     );
