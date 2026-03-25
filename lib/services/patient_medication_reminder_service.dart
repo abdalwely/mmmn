@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/services.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -21,6 +22,21 @@ class PatientMedicationReminderService {
     importance: Importance.max,
     priority: Priority.high,
     playSound: true,
+    enableVibration: true,
+    category: AndroidNotificationCategory.alarm,
+    fullScreenIntent: true,
+    audioAttributesUsage: AudioAttributesUsage.alarm,
+  );
+
+  static const AndroidNotificationDetails _androidAlarmDetails =
+      AndroidNotificationDetails(
+    'medication_channel',
+    'تنبيهات الأدوية',
+    channelDescription: 'تنبيهات لتذكير المريض بتناول الدواء',
+    importance: Importance.max,
+    priority: Priority.high,
+    playSound: true,
+    sound: RawResourceAndroidNotificationSound('alarm'),
     enableVibration: true,
     category: AndroidNotificationCategory.alarm,
     fullScreenIntent: true,
@@ -198,7 +214,28 @@ class PatientMedicationReminderService {
           continue;
         }
 
+        final payload =
+            '{"type":"medication","medicationId":"$medicationId","day":$day,"time":"${times[index]}"}';
+
         try {
+          await _notifications.zonedSchedule(
+            id,
+            '⏰ موعد الدواء',
+            '$medicationName\n$instructions',
+            scheduled,
+            const NotificationDetails(
+              android: _androidAlarmDetails,
+              iOS: _iosDetails,
+            ),
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+            payload: payload,
+          );
+        } on PlatformException catch (e) {
+          final isMissingAlarmSound = e.code == 'invalid_sound' ||
+              (e.message?.toLowerCase().contains('resource alarm could not be found') ??
+                  false);
           await _notifications.zonedSchedule(
             id,
             '⏰ موعد الدواء',
@@ -207,9 +244,10 @@ class PatientMedicationReminderService {
             const NotificationDetails(android: _androidDetails, iOS: _iosDetails),
             uiLocalNotificationDateInterpretation:
                 UILocalNotificationDateInterpretation.absoluteTime,
-            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-            payload:
-                '{"type":"medication","medicationId":"$medicationId","day":$day,"time":"${times[index]}"}',
+            androidScheduleMode: isMissingAlarmSound
+                ? AndroidScheduleMode.exactAllowWhileIdle
+                : AndroidScheduleMode.inexactAllowWhileIdle,
+            payload: payload,
           );
         } catch (_) {
           await _notifications.zonedSchedule(
@@ -221,8 +259,7 @@ class PatientMedicationReminderService {
             uiLocalNotificationDateInterpretation:
                 UILocalNotificationDateInterpretation.absoluteTime,
             androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-            payload:
-                '{"type":"medication","medicationId":"$medicationId","day":$day,"time":"${times[index]}"}',
+            payload: payload,
           );
         }
       }

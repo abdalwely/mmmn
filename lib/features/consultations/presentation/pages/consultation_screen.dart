@@ -447,27 +447,26 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
     try {
       if (selectedMedia != null && mediaType != null) {
         type = mediaType!;
-        if (type == 'audio') {
-          try {
-            downloadUrl = await _uploadFile();
-          } catch (e) {
-            if (_isStoragePlanRestricted(e)) {
-              inlineAudioBase64 = await _encodeInlineAudio(selectedMedia!);
-              type = 'audio_inline';
-            } else {
-              rethrow;
-            }
-          }
+        downloadUrl = await _uploadFile();
+
+        final shouldUseInlineFallback =
+            downloadUrl == null || _isStoragePlanRestricted(_lastUploadError);
+
+        if (type == 'audio' && shouldUseInlineFallback) {
+          inlineAudioBase64 = await _encodeInlineAudio(selectedMedia!);
+          type = 'audio_inline';
+          downloadUrl = null;
+        } else if (type != 'audio' && shouldUseInlineFallback) {
+          inlineFileBase64 = await _encodeInlineFile(selectedMedia!);
+          type = '${type}_inline';
+          downloadUrl = null;
+        }
+
+        if (downloadUrl == null && inlineAudioBase64 == null && inlineFileBase64 == null) {
+          throw Exception('failed_to_upload_and_inline_fallback');
         } else {
-          try {
-            downloadUrl = await _uploadFile();
-          } catch (e) {
-            if (_isStoragePlanRestricted(e)) {
-              inlineFileBase64 = await _encodeInlineFile(selectedMedia!);
-              type = '${type}_inline';
-            } else {
-              rethrow;
-            }
+          if (downloadUrl == null && _lastUploadError != null && mounted) {
+            _showErrorSnackbar('تعذر الرفع للسحابة، تم الإرسال كمرفق داخل الرسالة');
           }
         }
       }
@@ -641,10 +640,14 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
     final message = e.toString().toLowerCase();
     return message.contains('code\": 402') ||
         message.contains('httpresult: 402') ||
+        message.contains('http result code and inner exception') ||
+        message.contains('-13000') ||
         message.contains('spark pricing plan') ||
         message.contains('no longer supports') ||
         message.contains('terminated the upload session');
   }
+
+  Object? _lastUploadError;
 
   Future<String> _encodeInlineAudio(File audioFile) async {
     final bytes = await audioFile.readAsBytes();
@@ -676,6 +679,7 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
       _isUploading = true;
       _uploadProgress = 0.0;
     });
+    _lastUploadError = null;
 
     try {
       final ref = FirebaseStorage.instance.ref(
@@ -710,13 +714,14 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
 
       return downloadUrl;
     } catch (e) {
+      _lastUploadError = e;
       if (mounted) {
         setState(() {
           _isUploading = false;
           _uploadProgress = 0.0;
         });
       }
-      rethrow;
+      return null;
     }
   }
 
