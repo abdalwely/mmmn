@@ -10,13 +10,14 @@ import 'local_in_app_notification_service.dart';
 
 class PatientMedicationReminderService {
   PatientMedicationReminderService._();
+  static const String _medicationChannelId = 'medication_alarm_channel_v2';
 
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
   static const AndroidNotificationDetails _androidDetails =
       AndroidNotificationDetails(
-    'medication_channel',
+    _medicationChannelId,
     'تنبيهات الأدوية',
     channelDescription: 'تنبيهات لتذكير المريض بتناول الدواء',
     importance: Importance.max,
@@ -30,7 +31,7 @@ class PatientMedicationReminderService {
 
   static const AndroidNotificationDetails _androidAlarmDetails =
       AndroidNotificationDetails(
-    'medication_channel',
+    _medicationChannelId,
     'تنبيهات الأدوية',
     channelDescription: 'تنبيهات لتذكير المريض بتناول الدواء',
     importance: Importance.max,
@@ -118,7 +119,7 @@ class PatientMedicationReminderService {
       title: 'تم تفعيل تذكيرات الدواء',
       body: 'تمت موافقتك على الدواء وسيعمل المنبه حسب المواعيد المحددة.',
       type: 'medication',
-      channelId: 'medication_channel',
+      channelId: _medicationChannelId,
       payload: {'medicationId': medicationId, 'type': 'medication'},
       dedupeKey: 'approve-$medicationId',
     );
@@ -140,7 +141,7 @@ class PatientMedicationReminderService {
       type: 'medication',
       payload: {'medicationId': medicationId, 'action': 'rejected'},
       dedupeKey: 'reject-$medicationId',
-      channelId: 'medication_channel',
+      channelId: _medicationChannelId,
     );
   }
 
@@ -284,7 +285,7 @@ class PatientMedicationReminderService {
         'durationDays': durationDays,
       },
       dedupeKey: 'schedule-$medicationId-${times.join('-')}',
-      channelId: 'medication_channel',
+      channelId: _medicationChannelId,
     );
   }
 
@@ -315,7 +316,7 @@ class PatientMedicationReminderService {
       type: 'medication_cancel',
       payload: {'medicationId': medicationId},
       dedupeKey: 'cancel-$medicationId',
-      channelId: 'medication_channel',
+      channelId: _medicationChannelId,
     );
   }
 

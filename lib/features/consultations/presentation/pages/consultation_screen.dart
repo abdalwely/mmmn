@@ -687,21 +687,6 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
       );
 
       final uploadTask = ref.putFile(selectedMedia!);
-      uploadTask.snapshotEvents.listen((snapshot) {
-        if (mounted) {
-          setState(() {
-            _uploadProgress = snapshot.bytesTransferred / snapshot.totalBytes;
-          });
-        }
-      }, onError: (_) {
-        if (mounted) {
-          setState(() {
-            _isUploading = false;
-            _uploadProgress = 0.0;
-          });
-        }
-      });
-
       await uploadTask;
       final downloadUrl = await ref.getDownloadURL();
 
