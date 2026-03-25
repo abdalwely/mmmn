@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../services/appointment_service.dart';
@@ -17,8 +18,7 @@ class AppointmentsListScreen extends StatefulWidget {
 class _AppointmentsListScreenState extends State<AppointmentsListScreen> {
   String selectedStatus = 'الكل';
   DateTime? selectedDate;
-
-  bool _isDeleting = false; // حالة حذف الموعد
+  bool _isDeleting = false;
 
   @override
   Widget build(BuildContext context) {
@@ -54,97 +54,212 @@ class _AppointmentsListScreenState extends State<AppointmentsListScreen> {
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
-              } else if (snapshot.hasError) {
+              }
+              if (snapshot.hasError) {
                 return const Center(child: Text('حدث خطأ أثناء تحميل المواعيد'));
-              } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+              }
+              if (!snapshot.hasData || snapshot.data!.isEmpty) {
                 return const Center(child: Text('لا توجد مواعيد'));
               }
 
               var appointments = snapshot.data!
                   .where((appointment) => accountType == 'doctor'
-                  ? appointment.doctorId == currentUserId
-                  : appointment.userId == currentUserId)
+                      ? appointment.doctorId == currentUserId
+                      : appointment.userId == currentUserId)
                   .toList();
 
               if (selectedStatus != 'الكل') {
-                appointments = appointments.where((a) => a.status == selectedStatus).toList();
+                appointments =
+                    appointments.where((a) => a.status == selectedStatus).toList();
               }
 
               if (selectedDate != null) {
                 appointments = appointments.where((a) {
-                  final date = a.date.toDate(); // ✅ تحويل Timestamp إلى DateTime
+                  final date = a.date.toDate();
                   return date.year == selectedDate!.year &&
                       date.month == selectedDate!.month &&
                       date.day == selectedDate!.day;
                 }).toList();
               }
 
-
               if (appointments.isEmpty) {
                 return const Center(child: Text('لا توجد مواعيد مطابقة'));
               }
 
+              appointments.sort((a, b) => a.date.toDate().compareTo(b.date.toDate()));
+
+              final grouped = <String, List<Appointment>>{};
+              for (final appointment in appointments) {
+                final key = DateFormat('yyyy-MM-dd').format(appointment.date.toDate());
+                grouped.putIfAbsent(key, () => []).add(appointment);
+              }
+
+              final keys = grouped.keys.toList()..sort();
+
               return ListView.builder(
                 padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                itemCount: appointments.length,
+                itemCount: keys.length,
                 itemBuilder: (context, index) {
-                  final appointment = appointments[index];
-
-                  final displayName = accountType == 'doctor'
-                      ? (appointment.userName ?? 'مريض')
-                      : (appointment.doctorName ?? 'طبيب');
-
-                  final displayImageUrl = accountType == 'doctor'
-                      ? (appointment.userImageUrl ?? '')
-                      : (appointment.doctorImageUrl ?? '');
-
-                  return Card(
-                    elevation: 4,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                    margin: const EdgeInsets.only(bottom: 12),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      leading: CircleAvatar(
-                        radius: 28,
-                        backgroundImage: displayImageUrl.isNotEmpty
-                            ? NetworkImage(displayImageUrl)
-                            : const AssetImage('assets/images/doctor_placeholder.png') as ImageProvider
-                      ),
-                      title: Text(
-                        displayName,
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                      ),
-                      subtitle: Text('${appointment.formattedDate} الساعة ${appointment.formattedTime}'),
-                      trailing: Wrap(
-                        spacing: 12,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          Icon(Icons.circle, color: _statusColor(context, appointment.status), size: 14),
-                          IconButton(
-                            icon: Icon(Icons.delete_forever, color: theme.colorScheme.error),
-                            tooltip: 'إلغاء الموعد',
-                            onPressed: _isDeleting
-                                ? null
-                                : () => _confirmDelete(context, appointment.id),
-                          ),
-                          Icon(Icons.chevron_right, color: theme.colorScheme.onSurfaceVariant),
-                        ],
-                      ),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => AppointmentDetailsScreen(appointment: appointment),
-                          ),
-                        );
-                      },
-                    ),
+                  final dayKey = keys[index];
+                  final dayAppointments = grouped[dayKey]!;
+                  return _buildDaySection(
+                    context,
+                    dayAppointments,
+                    accountType,
+                    dayKey,
                   );
                 },
               );
             },
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildDaySection(
+    BuildContext context,
+    List<Appointment> dayAppointments,
+    String accountType,
+    String dayKey,
+  ) {
+    final date = DateTime.parse(dayKey);
+    final title = DateFormat('EEEE، d MMMM yyyy', 'ar').format(date);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 8, top: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.45),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
+        ...dayAppointments.map((appointment) => _buildAppointmentCard(
+              context,
+              appointment,
+              accountType,
+            )),
+      ],
+    );
+  }
+
+  Widget _buildAppointmentCard(
+    BuildContext context,
+    Appointment appointment,
+    String accountType,
+  ) {
+    final theme = Theme.of(context);
+    final displayName =
+        accountType == 'doctor' ? (appointment.userName) : (appointment.doctorName);
+
+    final displayImageUrl = accountType == 'doctor'
+        ? (appointment.userImageUrl ?? '')
+        : (appointment.doctorImageUrl ?? '');
+
+    final date = appointment.date.toDate();
+
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      margin: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => AppointmentDetailsScreen(appointment: appointment),
+            ),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 26,
+                backgroundImage: displayImageUrl.isNotEmpty
+                    ? NetworkImage(displayImageUrl)
+                    : const AssetImage('assets/images/doctor_placeholder.png')
+                        as ImageProvider,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayName ?? '—',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _infoChip(Icons.access_time_rounded,
+                            DateFormat('hh:mm a', 'en').format(date)),
+                        _infoChip(Icons.event_rounded,
+                            DateFormat('dd/MM/yyyy').format(date)),
+                        _statusChip(context, appointment.status),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.delete_forever, color: theme.colorScheme.error),
+                tooltip: 'إلغاء الموعد',
+                onPressed: _isDeleting
+                    ? null
+                    : () => _confirmDelete(context, appointment.id),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _infoChip(IconData icon, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        color: Colors.grey.withOpacity(0.12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: Colors.blueGrey),
+          const SizedBox(width: 4),
+          Text(text, style: const TextStyle(fontSize: 12)),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusChip(BuildContext context, String status) {
+    final color = _statusColor(context, status);
+    final label = statusLabels[status] ?? status;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        color: color.withOpacity(0.15),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
       ),
     );
   }
@@ -175,7 +290,10 @@ class _AppointmentsListScreenState extends State<AppointmentsListScreen> {
   Future<void> _deleteAppointment(String appointmentId) async {
     setState(() => _isDeleting = true);
     try {
-      await FirebaseFirestore.instance.collection('appointments').doc(appointmentId).delete();
+      await FirebaseFirestore.instance
+          .collection('appointments')
+          .doc(appointmentId)
+          .delete();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم إلغاء الموعد بنجاح')),
       );
@@ -223,28 +341,32 @@ class _AppointmentsListScreenState extends State<AppointmentsListScreen> {
               }).toList(),
             ),
             const SizedBox(height: 16),
-            const Text('تصفية حسب التاريخ:', style: TextStyle(fontWeight: FontWeight.bold)),
             ElevatedButton.icon(
               icon: const Icon(Icons.date_range),
-              label: const Text('اختر التاريخ'),
+              label: Text(selectedDate == null
+                  ? 'اختيار تاريخ'
+                  : DateFormat('yyyy-MM-dd').format(selectedDate!)),
               onPressed: () async {
-                final pickedDate = await showDatePicker(
+                final picked = await showDatePicker(
                   context: context,
-                  initialDate: DateTime.now(),
-                  firstDate: DateTime(2020),
+                  initialDate: selectedDate ?? DateTime.now(),
+                  firstDate: DateTime(2023),
                   lastDate: DateTime(2100),
                 );
-                if (pickedDate != null) {
-                  setState(() => selectedDate = pickedDate);
+                if (picked != null) {
+                  setState(() => selectedDate = picked);
+                  Navigator.pop(context);
                 }
-                Navigator.pop(context);
               },
             ),
             if (selectedDate != null)
               TextButton(
-                onPressed: () => setState(() => selectedDate = null),
-                child: const Text('إزالة تاريخ التصفية'),
-              )
+                child: const Text('إزالة التاريخ'),
+                onPressed: () {
+                  setState(() => selectedDate = null);
+                  Navigator.pop(context);
+                },
+              ),
           ],
         ),
       ),
@@ -252,16 +374,16 @@ class _AppointmentsListScreenState extends State<AppointmentsListScreen> {
   }
 
   Color _statusColor(BuildContext context, String status) {
-    final colors = Theme.of(context).colorScheme;
+    final scheme = Theme.of(context).colorScheme;
     switch (status) {
-      case 'approved':
-        return colors.primary;
       case 'pending':
         return Colors.orange;
-      case 'cancelled':
-        return colors.error;
+      case 'confirmed':
+        return Colors.green;
+      case 'canceled':
+        return scheme.error;
       default:
-        return colors.onSurfaceVariant;
+        return scheme.primary;
     }
   }
 }

@@ -39,7 +39,6 @@ class MedicationNotificationService {
       description: 'إشعارات تذكير بتناول الأدوية',
       importance: Importance.high,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('notification'),
       enableVibration: true,
     );
 
@@ -66,7 +65,6 @@ class MedicationNotificationService {
         importance: Importance.max,
         priority: Priority.high,
         playSound: true,
-        sound: const RawResourceAndroidNotificationSound('notification'),
         enableVibration: true,
         vibrationPattern: null,
         colorized: true,
