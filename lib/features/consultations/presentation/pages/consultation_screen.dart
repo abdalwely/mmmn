@@ -10,6 +10,7 @@ import 'package:visibility_detector/visibility_detector.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io';
 import '../../../../core/config/medical_theme.dart';
@@ -440,6 +441,7 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
 
     String? downloadUrl;
     String? inlineAudioBase64;
+    String? inlineFileBase64;
     String type = 'text';
 
     try {
@@ -457,7 +459,16 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
             }
           }
         } else {
-          downloadUrl = await _uploadFile();
+          try {
+            downloadUrl = await _uploadFile();
+          } catch (e) {
+            if (_isStoragePlanRestricted(e)) {
+              inlineFileBase64 = await _encodeInlineFile(selectedMedia!);
+              type = '${type}_inline';
+            } else {
+              rethrow;
+            }
+          }
         }
       }
 
@@ -472,6 +483,7 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
         'text': _messageController.text.trim(),
         'fileUrl': downloadUrl,
         'audioBase64': inlineAudioBase64,
+        'fileBase64': inlineFileBase64,
         'fileName': fileName,
         'type': type,
         'timestamp': FieldValue.serverTimestamp(),
@@ -577,7 +589,23 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
       }
       await _audioPlayer.stop();
       if (audioUrl != null && audioUrl.isNotEmpty) {
-        await _audioPlayer.play(UrlSource(audioUrl));
+        final localPath = await _downloadRemoteAudioToFile(
+          messageId: messageId,
+          audioUrl: audioUrl,
+        );
+
+        if (localPath != null) {
+          await _audioPlayer.play(DeviceFileSource(localPath));
+        } else if (inlineAudioBase64 != null) {
+          final path = await _createInlineAudioFile(
+            messageId: messageId,
+            base64Data: inlineAudioBase64,
+          );
+          await _audioPlayer.play(DeviceFileSource(path));
+        } else {
+          _showErrorSnackbar('تعذر تحميل الملف الصوتي من الرابط');
+          return;
+        }
       } else {
         final path = await _createInlineAudioFile(
           messageId: messageId,
@@ -591,15 +619,40 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
     }
   }
 
+  Future<String?> _downloadRemoteAudioToFile({
+    required String messageId,
+    required String audioUrl,
+  }) async {
+    try {
+      final response = await http.get(Uri.parse(audioUrl));
+      if (response.statusCode != 200) return null;
+
+      final path = '${Directory.systemTemp.path}/remote_voice_$messageId.m4a';
+      final file = File(path);
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+      _inlineAudioFiles['remote_$messageId'] = path;
+      return path;
+    } catch (_) {
+      return null;
+    }
+  }
+
   bool _isStoragePlanRestricted(Object e) {
     final message = e.toString().toLowerCase();
     return message.contains('code\": 402') ||
+        message.contains('httpresult: 402') ||
         message.contains('spark pricing plan') ||
-        message.contains('no longer supports');
+        message.contains('no longer supports') ||
+        message.contains('terminated the upload session');
   }
 
   Future<String> _encodeInlineAudio(File audioFile) async {
     final bytes = await audioFile.readAsBytes();
+    return base64Encode(bytes);
+  }
+
+  Future<String> _encodeInlineFile(File file) async {
+    final bytes = await file.readAsBytes();
     return base64Encode(bytes);
   }
 
@@ -1348,12 +1401,20 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
                         ),
                       ),
                       if (!canSend)
-                        IconButton(
-                          onPressed: _toggleVoiceRecording,
-                          tooltip: _isRecording ? 'إيقاف وإرسال التسجيل' : 'تسجيل صوتي',
-                          icon: Icon(
-                            _isRecording ? Icons.stop_circle_rounded : Icons.mic_rounded,
-                            color: _isRecording ? theme.colorScheme.error : theme.primaryColor,
+                        Container(
+                          decoration: BoxDecoration(
+                            color: _isRecording
+                                ? theme.colorScheme.error.withOpacity(0.15)
+                                : Colors.blue.withOpacity(0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: IconButton(
+                            onPressed: _toggleVoiceRecording,
+                            tooltip: _isRecording ? 'إيقاف وإرسال التسجيل' : 'تسجيل صوتي',
+                            icon: Icon(
+                              _isRecording ? Icons.stop_circle_rounded : Icons.mic_rounded,
+                              color: _isRecording ? theme.colorScheme.error : Colors.blue,
+                            ),
                           ),
                         ),
                     ],
@@ -1392,9 +1453,17 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
 
     Widget content;
     final inlineAudioBase64 = msg['audioBase64'] as String?;
+    final inlineFileBase64 = msg['fileBase64'] as String?;
 
-    if ((type == 'image' || type == 'video' || type == 'file' || type == 'audio' || type == 'audio_inline') &&
-        (fileUrl != null || inlineAudioBase64 != null)) {
+    if ((type == 'image' ||
+            type == 'video' ||
+            type == 'file' ||
+            type == 'audio' ||
+            type == 'audio_inline' ||
+            type == 'image_inline' ||
+            type == 'video_inline' ||
+            type == 'file_inline') &&
+        (fileUrl != null || inlineAudioBase64 != null || inlineFileBase64 != null)) {
       List<Widget> contentWidgets = [];
 
       if (text.isNotEmpty) {
@@ -1402,47 +1471,62 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
         contentWidgets.add(const SizedBox(height: 8));
       }
 
-      if (type == 'image') {
+      if (type == 'image' || type == 'image_inline') {
         contentWidgets.add(
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: InkWell(
-              onTap: () => _showFullScreenImage(fileUrl!, context),
-              child: Image.network(
-                fileUrl!,
-                width: 250,
-                height: 200,
-                fit: BoxFit.cover,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return Container(
-                    width: 250,
-                    height: 200,
-                    color: Colors.grey[200],
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        value: loadingProgress.expectedTotalBytes != null
-                            ? loadingProgress.cumulativeBytesLoaded /
-                            loadingProgress.expectedTotalBytes!
-                            : null,
+              onTap: () {
+                if (fileUrl != null && fileUrl.isNotEmpty) {
+                  _showFullScreenImage(fileUrl, context);
+                }
+              },
+              child: (fileUrl != null && fileUrl.isNotEmpty)
+                  ? Image.network(
+                      fileUrl,
+                      width: 250,
+                      height: 200,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Container(
+                          width: 250,
+                          height: 200,
+                          color: Colors.grey[200],
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              value: loadingProgress.expectedTotalBytes != null
+                                  ? loadingProgress.cumulativeBytesLoaded /
+                                      loadingProgress.expectedTotalBytes!
+                                  : null,
+                            ),
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        width: 250,
+                        height: 200,
+                        color: Colors.grey[200],
+                        child: const Icon(Icons.broken_image, size: 50),
                       ),
+                    )
+                  : Image.memory(
+                      base64Decode(inlineFileBase64!),
+                      width: 250,
+                      height: 200,
+                      fit: BoxFit.cover,
                     ),
-                  );
-                },
-                errorBuilder: (context, error, stackTrace) => Container(
-                  width: 250,
-                  height: 200,
-                  color: Colors.grey[200],
-                  child: const Icon(Icons.broken_image, size: 50),
-                ),
-              ),
             ),
           ),
         );
-      } else if (type == 'video') {
+      } else if (type == 'video' || type == 'video_inline') {
         contentWidgets.add(
           InkWell(
-            onTap: () => _showVideoDialog(fileUrl!, context),
+            onTap: () {
+              if (fileUrl != null && fileUrl.isNotEmpty) {
+                _showVideoDialog(fileUrl, context);
+              }
+            },
             child: Container(
               width: 250,
               height: 150,
@@ -1457,7 +1541,7 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
                       size: 50,
                       color: theme.primaryColor),
                   const SizedBox(height: 8),
-                  Text('فيديو مرفق',
+                  Text(fileUrl != null ? 'فيديو مرفق' : 'فيديو مرفق (محلي فقط)',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.primaryColor,
                       )),
@@ -1466,10 +1550,16 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
             ),
           ),
         );
-      } else if (type == 'file') {
+      } else if (type == 'file' || type == 'file_inline') {
         contentWidgets.add(
           InkWell(
-            onTap: () async => await launchUrl(Uri.parse(fileUrl!)),
+            onTap: () async {
+              if (fileUrl != null && fileUrl.isNotEmpty) {
+                await launchUrl(Uri.parse(fileUrl));
+              } else {
+                _showErrorSnackbar('الملف مخزن محلياً داخل الرسالة');
+              }
+            },
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -1542,9 +1632,15 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
                             ? _audioDuration.inMilliseconds.toDouble()
                             : 1,
                         onChanged: (_playingMessageId == msgId)
-                            ? (value) => _audioPlayer.seek(
-                          Duration(milliseconds: value.toInt()),
-                        )
+                            ? (value) async {
+                                try {
+                                  await _audioPlayer.seek(
+                                    Duration(milliseconds: value.toInt()),
+                                  );
+                                } catch (_) {
+                                  _showErrorSnackbar('تعذر تحريك المؤشر الصوتي');
+                                }
+                              }
                             : null,
                       ),
                     ),
