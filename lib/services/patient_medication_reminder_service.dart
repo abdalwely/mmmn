@@ -5,6 +5,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
+import 'local_in_app_notification_service.dart';
+
 class PatientMedicationReminderService {
   PatientMedicationReminderService._();
 
@@ -22,6 +24,7 @@ class PatientMedicationReminderService {
     enableVibration: true,
     category: AndroidNotificationCategory.alarm,
     fullScreenIntent: true,
+    audioAttributesUsage: AudioAttributesUsage.alarm,
   );
 
   static const DarwinNotificationDetails _iosDetails = DarwinNotificationDetails(
@@ -53,6 +56,8 @@ class PatientMedicationReminderService {
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
         ?.requestExactAlarmsPermission();
+
+    await LocalInAppNotificationService.initialize();
   }
 
   static Stream<QuerySnapshot<Map<String, dynamic>>> streamForCurrentUser() {
@@ -91,6 +96,16 @@ class PatientMedicationReminderService {
     });
 
     await scheduleMedicationById(medicationId);
+
+    await LocalInAppNotificationService.showAndStore(
+      id: medicationId.hashCode & 0x7fffffff,
+      title: 'تم تفعيل تذكيرات الدواء',
+      body: 'تمت موافقتك على الدواء وسيعمل المنبه يومياً حسب الأوقات المحددة.',
+      type: 'medication',
+      channelId: 'medication_channel',
+      payload: {'medicationId': medicationId, 'action': 'approved'},
+      dedupeKey: 'approve-$medicationId',
+    );
   }
 
   static Future<void> rejectMedication({
@@ -102,6 +117,15 @@ class PatientMedicationReminderService {
     });
 
     await cancelMedicationReminders(medicationId);
+
+    await LocalInAppNotificationService.storeNotification(
+      title: 'تم رفض طلب دواء',
+      body: 'تم رفض الدواء ولن يتم تشغيل أي منبهات له.',
+      type: 'medication',
+      payload: {'medicationId': medicationId, 'action': 'rejected'},
+      dedupeKey: 'reject-$medicationId',
+      channelId: 'medication_channel',
+    );
   }
 
   static Future<void> rescheduleApprovedForCurrentPatient() async {
@@ -188,6 +212,15 @@ class PatientMedicationReminderService {
       'scheduledNotificationIds': ids,
       'lastScheduledAt': FieldValue.serverTimestamp(),
     });
+
+    await LocalInAppNotificationService.storeNotification(
+      title: 'تمت جدولة منبهات الدواء',
+      body: 'تمت جدولة ${ids.length} منبه(ات) يومية لدواء $medicationName.',
+      type: 'medication_schedule',
+      payload: {'medicationId': medicationId, 'times24': times},
+      dedupeKey: 'schedule-$medicationId-${times.join('-')}',
+      channelId: 'medication_channel',
+    );
   }
 
   static Future<void> cancelMedicationReminders(String medicationId) async {
@@ -210,6 +243,15 @@ class PatientMedicationReminderService {
       'scheduledNotificationIds': [],
       'lastScheduledAt': FieldValue.serverTimestamp(),
     });
+
+    await LocalInAppNotificationService.storeNotification(
+      title: 'تم إيقاف منبهات الدواء',
+      body: 'تم إلغاء جميع منبهات الدواء المحدد.',
+      type: 'medication_cancel',
+      payload: {'medicationId': medicationId},
+      dedupeKey: 'cancel-$medicationId',
+      channelId: 'medication_channel',
+    );
   }
 
   static int _buildReminderId(String medicationId, int index) {
