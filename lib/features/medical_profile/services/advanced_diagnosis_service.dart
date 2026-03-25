@@ -6,6 +6,16 @@ import 'package:digl/features/medical_profile/models/doctor_recommendation_model
 /// تقوم بتحليل بيانات المريض واقتراح الأدوية والأطباء المناسبين
 class AdvancedDiagnosisService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static const Map<String, List<String>> _symptomSynonyms = {
+    'صداع': ['صداع', 'صداع نصفي', 'شقيقة', 'الم راس', 'ألم رأس'],
+    'حمى': ['حمى', 'حرارة', 'ارتفاع حرارة', 'سخونة'],
+    'سعال': ['سعال', 'كحة', 'كحه'],
+    'احتقان': ['احتقان', 'انسداد الانف', 'رشح'],
+    'ضيق التنفس': ['ضيق التنفس', 'نهجان', 'صعوبة تنفس'],
+    'المعدة': ['المعدة', 'معدة', 'غثيان', 'استفراغ', 'قيء'],
+    'حساسية': ['حساسية', 'حكة', 'طفح', 'عطاس'],
+    'ألم الصدر': ['ألم الصدر', 'وجع صدر', 'ضغط الصدر'],
+  };
 
   /// ✅ نموذج لتمثيل توصية الدواء
   static const List<Map<String, dynamic>> medicinesDatabase = [
@@ -232,12 +242,18 @@ class AdvancedDiagnosisService {
     final normalized = symptomsText
         .toLowerCase()
         .replaceAll(RegExp(r'[^\p{L}\p{N}\s]', unicode: true), ' ');
-    final words = normalized.split(RegExp(r'[\s،]+'));
+    final words = normalized.split(RegExp(r'[\s،]+')).where((word) => word.length > 2).toList();
 
-    // إزالة الكلمات الفارغة والقصيرة جداً
-    return words
-        .where((word) => word.isNotEmpty && word.length > 2)
-        .toList();
+    final normalizedSymptoms = <String>{};
+    for (final entry in _symptomSynonyms.entries) {
+      final hasMatch = entry.value.any((alias) => normalized.contains(alias.toLowerCase()));
+      if (hasMatch) {
+        normalizedSymptoms.add(entry.key.toLowerCase());
+      }
+    }
+
+    normalizedSymptoms.addAll(words.where((word) => word.isNotEmpty));
+    return normalizedSymptoms.toList();
   }
 
   /// ✅ اقتراح الأدوية المناسبة بناءً على الأعراض والخطورة
@@ -257,8 +273,10 @@ class AdvancedDiagnosisService {
       // حساب عدد الأعراض المتطابقة
       int matchCount = 0;
       for (final symptom in symptoms) {
-        if (medicineSymptoms
-            .any((ms) => ms.toLowerCase().contains(symptom))) {
+        if (medicineSymptoms.any((ms) {
+          final lowerMs = ms.toLowerCase();
+          return lowerMs.contains(symptom) || symptom.contains(lowerMs);
+        })) {
           matchCount++;
         }
       }
@@ -274,7 +292,7 @@ class AdvancedDiagnosisService {
             sideEffects: (medicine['sideEffects'] as List<dynamic>)
                 .cast<String>(),
             warnings: (medicine['warnings'] as List<dynamic>).cast<String>(),
-            matchPercentage: (matchCount / symptoms.length * 100).toInt(),
+            matchPercentage: (matchCount / symptoms.length.clamp(1, 10) * 100).toInt(),
           ),
         );
       }
@@ -283,22 +301,7 @@ class AdvancedDiagnosisService {
     // ترتيب الأدوية بناءً على نسبة التطابق
     recommendations.sort((a, b) => b.matchPercentage.compareTo(a.matchPercentage));
 
-    if (recommendations.isEmpty) {
-      return medicinesDatabase
-          .take(2)
-          .map(
-            (medicine) => MedicineRecommendation(
-              name: medicine['name'] as String,
-              activeIngredient: medicine['activeIngredient'] as String,
-              dose: medicine['dose'] as String,
-              category: medicine['category'] as String,
-              sideEffects: (medicine['sideEffects'] as List<dynamic>).cast<String>(),
-              warnings: (medicine['warnings'] as List<dynamic>).cast<String>(),
-              matchPercentage: 35,
-            ),
-          )
-          .toList();
-    }
+    if (recommendations.isEmpty) return [];
 
     return recommendations.take(3).toList();
   }
@@ -317,8 +320,10 @@ class AdvancedDiagnosisService {
       // حساب عدد الأعراض المتطابقة
       int matchCount = 0;
       for (final symptom in symptoms) {
-        if (specialtySymptoms
-            .any((ss) => ss.toLowerCase().contains(symptom))) {
+        if (specialtySymptoms.any((ss) {
+          final lowerSs = ss.toLowerCase();
+          return lowerSs.contains(symptom) || symptom.contains(lowerSs);
+        })) {
           matchCount++;
         }
       }
@@ -328,15 +333,22 @@ class AdvancedDiagnosisService {
           SpecialtyRecommendation(
             name: specialty['name'] as String,
             description: specialty['description'] as String,
-            matchPercentage: (matchCount / symptoms.length * 100).toInt(),
+            matchPercentage: (matchCount / symptoms.length.clamp(1, 10) * 100).toInt(),
           ),
         );
       }
     }
 
     recommendations.sort((a, b) => b.matchPercentage.compareTo(a.matchPercentage));
+    if (recommendations.isNotEmpty) return recommendations.take(2).toList();
 
-    return recommendations.take(2).toList(); // إرجاع أفضل تخصصين
+    return [
+      SpecialtyRecommendation(
+        name: 'طب عام',
+        description: 'بداية آمنة لتقييم الحالة وتحويلها للتخصص المناسب عند الحاجة',
+        matchPercentage: 40,
+      ),
+    ];
   }
 
   static Future<List<DoctorRecommendation>> _recommendDoctors({
@@ -355,11 +367,12 @@ class AdvancedDiagnosisService {
     for (final doc in doctorsQuery.docs) {
       final data = doc.data();
       final doctorSpecialty = (data['specialtyName'] ?? data['specialty'] ?? '').toString();
-      if (!specialtyNames.contains(doctorSpecialty)) continue;
+      final specialtyMatched = specialtyNames.contains(doctorSpecialty);
+      if (!specialtyMatched && specialties.first.name != 'طب عام') continue;
       final rating = (data['rating'] as num?)?.toDouble() ?? 0.0;
       final available = (data['isAvailable'] as bool?) ?? true;
       final online = (data['isOnline'] as bool?) ?? false;
-      int matchScore = 50;
+      int matchScore = specialtyMatched ? 60 : 35;
       if (rating >= 4.5) matchScore += 25;
       if (online) matchScore += 15;
       if (available) matchScore += 10;
@@ -371,7 +384,7 @@ class AdvancedDiagnosisService {
           doc,
           matchPercentage: matchScore,
           reasons: [
-            'تخصص مناسب للحالة',
+            if (specialtyMatched) 'تخصص مناسب للحالة' else 'طبيب عام مناسب للتقييم الأولي',
             if (rating >= 4) 'تقييم مرتفع',
             if (available) 'متاح للحجز',
             if (online) 'متصل الآن',

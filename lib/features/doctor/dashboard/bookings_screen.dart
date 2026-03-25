@@ -64,8 +64,6 @@ class _BookingsScreenState extends State<BookingsScreen> {
         stream: _firestore
             .collection('appointments')
             .where('doctorId', isEqualTo: _auth.currentUser?.uid)
-            .where('status', isEqualTo: 'pending')
-            .orderBy('createdAt', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -75,7 +73,15 @@ class _BookingsScreenState extends State<BookingsScreen> {
             return Center(child: Text('خطأ في تحميل الحجوزات: ${snapshot.error}'));
           }
 
-          final bookings = snapshot.data?.docs ?? [];
+          final bookings = (snapshot.data?.docs ?? []).where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return (data['status'] as String? ?? 'pending') == 'pending';
+          }).toList()
+            ..sort((a, b) {
+              final aCreatedAt = ((a.data() as Map<String, dynamic>)['createdAt'] as Timestamp?)?.toDate();
+              final bCreatedAt = ((b.data() as Map<String, dynamic>)['createdAt'] as Timestamp?)?.toDate();
+              return (bCreatedAt ?? DateTime(1970)).compareTo(aCreatedAt ?? DateTime(1970));
+            });
           if (bookings.isEmpty) {
             return const Center(child: Text('لا توجد حجوزات جديدة'));
           }

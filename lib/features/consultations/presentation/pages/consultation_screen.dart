@@ -10,6 +10,7 @@ import 'package:visibility_detector/visibility_detector.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'dart:convert';
 import 'dart:io';
 import '../../../../core/config/medical_theme.dart';
 import '../widgets/message_reactions_widget.dart';
@@ -82,6 +83,7 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
   String? _playingMessageId;
   Duration _audioDuration = Duration.zero;
   Duration _audioPosition = Duration.zero;
+  final Map<String, String> _inlineAudioFiles = {};
 
   @override
   void initState() {
@@ -437,12 +439,26 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
     }
 
     String? downloadUrl;
+    String? inlineAudioBase64;
     String type = 'text';
 
     try {
       if (selectedMedia != null && mediaType != null) {
-        downloadUrl = await _uploadFile();
         type = mediaType!;
+        if (type == 'audio') {
+          try {
+            downloadUrl = await _uploadFile();
+          } catch (e) {
+            if (_isStoragePlanRestricted(e)) {
+              inlineAudioBase64 = await _encodeInlineAudio(selectedMedia!);
+              type = 'audio_inline';
+            } else {
+              rethrow;
+            }
+          }
+        } else {
+          downloadUrl = await _uploadFile();
+        }
       }
 
       await _firestore
@@ -455,6 +471,7 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
         'senderImage': getUserImageUrl(widget.isDoctor ? doctorData : patientData),
         'text': _messageController.text.trim(),
         'fileUrl': downloadUrl,
+        'audioBase64': inlineAudioBase64,
         'fileName': fileName,
         'type': type,
         'timestamp': FieldValue.serverTimestamp(),
@@ -490,8 +507,14 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
   Future<void> _startRecording() async {
     try {
       if (await _audioRecorder.hasPermission()) {
-        final path = '/tmp/${DateTime.now().millisecondsSinceEpoch}.m4a';
-        await _audioRecorder.start(const RecordConfig(), path: path);
+        final path = '${Directory.systemTemp.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+        await _audioRecorder.start(
+          const RecordConfig(
+            encoder: AudioEncoder.aacLc,
+
+          ),
+          path: path,
+        );
         if (mounted) {
           setState(() {
             _isRecording = true;
@@ -512,9 +535,16 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
       if (!mounted) return;
       setState(() => _isRecording = false);
       if (path == null) return;
-      selectedMedia = File(path);
-      mediaType = 'audio';
-      fileName = 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final recordingFile = File(path);
+      if (!await recordingFile.exists()) {
+        _showErrorSnackbar('تعذر العثور على ملف التسجيل');
+        return;
+      }
+      setState(() {
+        selectedMedia = recordingFile;
+        mediaType = 'audio';
+        fileName = 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      });
       await _sendMessage();
     } catch (_) {
       if (mounted) setState(() => _isRecording = false);
@@ -522,9 +552,18 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
     }
   }
 
+  Future<void> _toggleVoiceRecording() async {
+    if (_isRecording) {
+      await _stopAndSendRecording();
+      return;
+    }
+    await _startRecording();
+  }
+
   Future<void> _playOrPauseAudio({
     required String messageId,
-    required String audioUrl,
+    String? audioUrl,
+    String? inlineAudioBase64,
   }) async {
     try {
       if (_playingMessageId == messageId) {
@@ -532,12 +571,52 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
         setState(() => _playingMessageId = null);
         return;
       }
+      if (audioUrl == null && inlineAudioBase64 == null) {
+        _showErrorSnackbar('لا يوجد ملف صوتي للتشغيل');
+        return;
+      }
       await _audioPlayer.stop();
-      await _audioPlayer.play(UrlSource(audioUrl));
+      if (audioUrl != null && audioUrl.isNotEmpty) {
+        await _audioPlayer.play(UrlSource(audioUrl));
+      } else {
+        final path = await _createInlineAudioFile(
+          messageId: messageId,
+          base64Data: inlineAudioBase64!,
+        );
+        await _audioPlayer.play(DeviceFileSource(path));
+      }
       setState(() => _playingMessageId = messageId);
     } catch (_) {
       _showErrorSnackbar('تعذر تشغيل الرسالة الصوتية');
     }
+  }
+
+  bool _isStoragePlanRestricted(Object e) {
+    final message = e.toString().toLowerCase();
+    return message.contains('code\": 402') ||
+        message.contains('spark pricing plan') ||
+        message.contains('no longer supports');
+  }
+
+  Future<String> _encodeInlineAudio(File audioFile) async {
+    final bytes = await audioFile.readAsBytes();
+    return base64Encode(bytes);
+  }
+
+  Future<String> _createInlineAudioFile({
+    required String messageId,
+    required String base64Data,
+  }) async {
+    if (_inlineAudioFiles.containsKey(messageId)) {
+      return _inlineAudioFiles[messageId]!;
+    }
+
+    final bytes = base64Decode(base64Data);
+    final path = '${Directory.systemTemp.path}/inline_voice_$messageId.m4a';
+    final file = File(path);
+    await file.writeAsBytes(bytes, flush: true);
+    _inlineAudioFiles[messageId] = path;
+    return path;
   }
   Future<String?> _uploadFile() async {
     setState(() {
@@ -555,6 +634,13 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
         if (mounted) {
           setState(() {
             _uploadProgress = snapshot.bytesTransferred / snapshot.totalBytes;
+          });
+        }
+      }, onError: (_) {
+        if (mounted) {
+          setState(() {
+            _isUploading = false;
+            _uploadProgress = 0.0;
           });
         }
       });
@@ -1108,9 +1194,10 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
 
   Widget _buildMessageInput(ThemeData theme, bool isDarkMode) {
     final borderRadius = BorderRadius.circular(30);
+    final canSend = _messageController.text.trim().isNotEmpty || selectedMedia != null;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
       decoration: BoxDecoration(
         color: isDarkMode ? Colors.grey[900] : Colors.white,
         border: Border(
@@ -1221,7 +1308,7 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
 
                       // ========== زر الإرسال الواضح والمحسّن ==========
                       Container(
-                        margin: const EdgeInsets.only(left: 4),
+                        margin: const EdgeInsets.only(left: 4, bottom: 2),
                         child: AnimatedSwitcher(
                           duration: const Duration(milliseconds: 300),
                           transitionBuilder: (child, animation) {
@@ -1242,40 +1329,31 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
                             ),
                           )
                               : Material(
-                            color: Colors.transparent,
+                            color: canSend ? theme.primaryColor : theme.disabledColor.withOpacity(0.5),
+                            borderRadius: BorderRadius.circular(20),
                             child: InkWell(
                               key: const ValueKey("send_button"),
-                              onTap: (_messageController.text.isEmpty && selectedMedia == null)
-                                  ? null
-                                  : _sendMessage,
+                              onTap: canSend ? _sendMessage : null,
                               borderRadius: BorderRadius.circular(20),
                               child: Padding(
-                                padding: const EdgeInsets.all(8.0),
+                                padding: const EdgeInsets.all(9),
                                 child: Icon(
-                                  (_messageController.text.isEmpty && selectedMedia == null)
-                                      ? Icons.mic_rounded
-                                      : Icons.send_rounded,
-                                  color: (_messageController.text.isEmpty && selectedMedia == null)
-                                      ? theme.disabledColor
-                                      : theme.primaryColor,
-                                  size: 20,
-                                  weight: 24,
+                                  Icons.send_rounded,
+                                  color: theme.colorScheme.onPrimary,
+                                  size: 22,
                                 ),
                               ),
                             ),
                           ),
                         ),
                       ),
-                      if (_messageController.text.isEmpty && selectedMedia == null)
-                        GestureDetector(
-                          onLongPressStart: (_) => _startRecording(),
-                          onLongPressEnd: (_) => _stopAndSendRecording(),
-                          child: Container(
-                            margin: const EdgeInsetsDirectional.only(start: 4),
-                            child: Icon(
-                              _isRecording ? Icons.mic : Icons.mic_none_rounded,
-                              color: _isRecording ? Colors.red : theme.primaryColor,
-                            ),
+                      if (!canSend)
+                        IconButton(
+                          onPressed: _toggleVoiceRecording,
+                          tooltip: _isRecording ? 'إيقاف وإرسال التسجيل' : 'تسجيل صوتي',
+                          icon: Icon(
+                            _isRecording ? Icons.stop_circle_rounded : Icons.mic_rounded,
+                            color: _isRecording ? theme.colorScheme.error : theme.primaryColor,
                           ),
                         ),
                     ],
@@ -1313,7 +1391,10 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
     }
 
     Widget content;
-    if ((type == 'image' || type == 'video' || type == 'file' || type == 'audio') && fileUrl != null) {
+    final inlineAudioBase64 = msg['audioBase64'] as String?;
+
+    if ((type == 'image' || type == 'video' || type == 'file' || type == 'audio' || type == 'audio_inline') &&
+        (fileUrl != null || inlineAudioBase64 != null)) {
       List<Widget> contentWidgets = [];
 
       if (text.isNotEmpty) {
@@ -1326,9 +1407,9 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: InkWell(
-              onTap: () => _showFullScreenImage(fileUrl, context),
+              onTap: () => _showFullScreenImage(fileUrl!, context),
               child: Image.network(
-                fileUrl,
+                fileUrl!,
                 width: 250,
                 height: 200,
                 fit: BoxFit.cover,
@@ -1361,7 +1442,7 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
       } else if (type == 'video') {
         contentWidgets.add(
           InkWell(
-            onTap: () => _showVideoDialog(fileUrl, context),
+            onTap: () => _showVideoDialog(fileUrl!, context),
             child: Container(
               width: 250,
               height: 150,
@@ -1388,7 +1469,7 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
       } else if (type == 'file') {
         contentWidgets.add(
           InkWell(
-            onTap: () async => await launchUrl(Uri.parse(fileUrl)),
+            onTap: () async => await launchUrl(Uri.parse(fileUrl!)),
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -1421,7 +1502,7 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
             ),
           ),
         );
-      } else if (type == 'audio') {
+      } else if (type == 'audio' || type == 'audio_inline') {
         contentWidgets.add(
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -1439,6 +1520,7 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
                       onPressed: () => _playOrPauseAudio(
                         messageId: msgId,
                         audioUrl: fileUrl,
+                        inlineAudioBase64: inlineAudioBase64,
                       ),
                       icon: Icon(
                         _playingMessageId == msgId
@@ -1543,12 +1625,53 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
           )
               : const SizedBox.shrink();
 
-          return GestureDetector(
-            onDoubleTap: () => MessageReactionsService.toggleReaction(
+          Future<void> onDoubleTapReaction() async {
+            final selected = await showModalBottomSheet<String>(
+              context: context,
+              backgroundColor: Theme.of(context).colorScheme.surface,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              builder: (context) {
+                const emojis = ['❤️', '👍', '🙏', '😢', '😮', '😂'];
+                return SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                    child: Wrap(
+                      spacing: 12,
+                      children: emojis.map((emoji) {
+                        return InkWell(
+                          onTap: () => Navigator.pop(context, emoji),
+                          borderRadius: BorderRadius.circular(28),
+                          child: Container(
+                            width: 48,
+                            height: 48,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer.withOpacity(0.45),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Text(emoji, style: const TextStyle(fontSize: 24)),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                );
+              },
+            );
+
+            if (selected == null) return;
+            await MessageReactionsService.toggleReaction(
               consultationId: widget.consultationId,
               messageId: msgId,
-              emoji: '❤️',
-            ),
+              emoji: selected,
+            );
+            if (mounted) setState(() {});
+          }
+
+          return GestureDetector(
+            onDoubleTap: onDoubleTapReaction,
             onLongPress: () => _handleLongPress(doc),
             onHorizontalDragEnd: (details) {
               if (details.primaryVelocity != null && details.primaryVelocity! > 0) {
@@ -1644,15 +1767,10 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
                               ],
                             ),
                           ),
-                          // ========== التفاعلات على الرسالة ==========
-                          const SizedBox(height: 6),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            child: MessageReactionsWidget(
-                              consultationId: widget.consultationId,
-                              messageId: msgId,
-                              showAddButton: false,
-                            ),
+                          MessageReactionsWidget(
+                            consultationId: widget.consultationId,
+                            messageId: msgId,
+                            showAddButton: false,
                           ),
                         ],
                       ),

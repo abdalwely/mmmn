@@ -162,6 +162,14 @@ class _HealthAssessmentScreenState extends State<HealthAssessmentScreen>
       }
 
       final symptomsData = symptomsSnapshot.docs.first.data();
+      final mainSymptom = (symptomsData['mainSymptom'] ?? '').toString();
+      final additionalSymptoms = (symptomsData['additionalSymptoms'] as List<dynamic>? ?? [])
+          .map((e) => e.toString())
+          .toList();
+      final symptomText = [
+        mainSymptom,
+        ...additionalSymptoms,
+      ].where((value) => value.trim().isNotEmpty).join('، ');
 
       // بناء نموذج HealthProfile من البيانات
       final users = _auth.currentUser!;
@@ -173,11 +181,11 @@ class _HealthAssessmentScreenState extends State<HealthAssessmentScreen>
         patientId: users.uid,
         age: int.tryParse(data['age']?.toString() ?? '0') ?? 0,
         gender: data['gender'] ?? 'male',
-        hasChronicDisease: data['hasChronicDisease'] ?? false,
-        chronicDiseaseDetails: data['chronicDiseaseDetails'],
-        symptoms: symptomsData['mainSymptom'] ?? '',
+        hasChronicDisease: (data['hasChronicDisease'] ?? false) || additionalSymptoms.isNotEmpty,
+        chronicDiseaseDetails: data['chronicDiseaseDetails'] ?? symptomsData['chronicDetails'],
+        symptoms: symptomText,
         symptomStartDate: symptomsData['symptomStartDate'] ?? '',
-        painLevel: 5, // قيمة افتراضية
+        painLevel: (symptomsData['painLevel'] as int?) ?? (symptomsData['severityScore'] as int?) ?? 7,
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
       );
@@ -198,7 +206,7 @@ class _HealthAssessmentScreenState extends State<HealthAssessmentScreen>
 
       setState(() {
         _lastAnalysisResult = analysisResult;
-        _recommendedDoctors = doctors;
+        _recommendedDoctors = doctors.isNotEmpty ? doctors : analysisResult.recommendedDoctors;
         _hasCompletedAssessment = true;
       });
 

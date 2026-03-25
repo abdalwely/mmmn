@@ -53,9 +53,16 @@ class DoctorMatchingService {
 
       // إرجاع أفضل N طبيب
       final result = matchedDoctors.take(returnCount).toList();
-      print('✅ تم العثور على ${result.length} طبيب(ة) مناسب(ة)');
+      if (result.isNotEmpty) {
+        print('✅ تم العثور على ${result.length} طبيب(ة) مناسب(ة)');
+        return result;
+      }
 
-      return result;
+      final fallbackDoctors = await getAllVerifiedDoctors();
+      fallbackDoctors.sort((a, b) => b.overallScore.compareTo(a.overallScore));
+      final fallbackResult = fallbackDoctors.take(returnCount).toList();
+      print('ℹ️ لا يوجد تطابق مباشر، تم إرجاع ${fallbackResult.length} طبيب(ة) موثّق(ة) كبديل');
+      return fallbackResult;
     } catch (e) {
       print('❌ خطأ في البحث عن الأطباء: $e');
       rethrow;

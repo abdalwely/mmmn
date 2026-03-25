@@ -44,7 +44,6 @@ class _AppointmentDetailsScreenState extends State<AppointmentDetailsScreen> {
     }
   }
 
-
   Future<void> _checkUserType() async {
     try {
       final currentUserId = FirebaseAuth.instance.currentUser!.uid;
@@ -64,7 +63,7 @@ class _AppointmentDetailsScreenState extends State<AppointmentDetailsScreen> {
   Widget build(BuildContext context) {
     final date = widget.appointment.date.toDate();
     final theme = Theme.of(context);
-    final isDarkMode = theme.brightness == Brightness.dark;
+    final colorScheme = theme.colorScheme;
 
     if (isLoading) {
       return const Scaffold(
@@ -74,32 +73,42 @@ class _AppointmentDetailsScreenState extends State<AppointmentDetailsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: isDarkMode? Colors.grey[900]: Colors.white,
-        foregroundColor: Colors.blue,
-        elevation: 2,
+        backgroundColor: colorScheme.surface,
+        foregroundColor: colorScheme.onSurface,
+        elevation: 0,
         title: const Text('تفاصيل الموعد'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              colorScheme.primaryContainer.withOpacity(0.35),
+              colorScheme.surface,
+            ],
+          ),
+        ),
         child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              // بطاقة بيانات المستخدم
               Card(
-                elevation: 4,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Row(
                     children: [
                       CircleAvatar(
-                        radius: 40,
-                        backgroundImage: NetworkImage(
-                          isDoctor
-                              ? widget.appointment.userImageUrl ?? ''
-                              : widget.appointment.doctorImageUrl ?? '',
-                        ),
-                        onBackgroundImageError: (_, __) {},
+                        radius: 38,
+                        backgroundColor: colorScheme.primaryContainer,
+                        backgroundImage: _contactImageUrl()?.isNotEmpty == true
+                            ? NetworkImage(_contactImageUrl()!)
+                            : null,
+                        child: _contactImageUrl()?.isNotEmpty == true
+                            ? null
+                            : Icon(Icons.person_rounded, color: colorScheme.primary),
                       ),
                       const SizedBox(width: 16),
                       Expanded(
@@ -107,18 +116,21 @@ class _AppointmentDetailsScreenState extends State<AppointmentDetailsScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              isDoctor
-                                  ? widget.appointment.userName
-                                  : widget.appointment.doctorName,
-                              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                              isDoctor ? widget.appointment.userName : widget.appointment.doctorName,
+                              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'رقم الهاتف: ${isDoctor ? widget.appointment.userPhone ?? "غير متوفر" : widget.appointment.doctorPhone ?? "غير متوفر"}',
+                              isDoctor ? 'المريض' : widget.appointment.specialtyName,
+                              style: theme.textTheme.bodyMedium?.copyWith(color: colorScheme.primary),
                             ),
-                            const SizedBox(height: 4),
-                            if (!isDoctor)
-                              Text('المؤهل: ${widget.appointment.specialtyName}'),
+                            const SizedBox(height: 10),
+                            _buildInfoChip(
+                              context,
+                              icon: Icons.phone,
+                              text:
+                                  'رقم الهاتف: ${isDoctor ? widget.appointment.userPhone ?? "غير متوفر" : widget.appointment.doctorPhone ?? "غير متوفر"}',
+                            ),
                           ],
                         ),
                       ),
@@ -126,75 +138,80 @@ class _AppointmentDetailsScreenState extends State<AppointmentDetailsScreen> {
                   ),
                 ),
               ),
-
-              const SizedBox(height: 24),
-
-              // بطاقة التفاصيل
+              const SizedBox(height: 16),
               Card(
-                elevation: 4,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(14),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildTile('المكان', widget.appointment.workplace),
-                      const Divider(),
-                      _buildTile('التاريخ', formatArabicDate(date)),
-                      const Divider(),
-                      _buildTile('الوقت', widget.appointment.time),
-                      const Divider(),
-                      _buildTile('الحالة', _translateStatus(widget.appointment.status)),
-                      const Divider(),
-                      _buildTile('طريقة الدفع', widget.appointment.payment),
+                      _buildDetailRow(context, Icons.location_on_outlined, 'المكان', widget.appointment.workplace),
+                      _buildDetailRow(context, Icons.calendar_month_rounded, 'التاريخ', formatArabicDate(date)),
+                      _buildDetailRow(context, Icons.schedule_rounded, 'الوقت', widget.appointment.time),
+                      _buildDetailRow(context, Icons.payments_outlined, 'طريقة الدفع', widget.appointment.payment),
+                      _buildDetailRow(
+                        context,
+                        Icons.local_hospital_outlined,
+                        'الحالة',
+                        _translateStatus(widget.appointment.status),
+                        isLast: true,
+                      ),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: 24),
-
-              // أزرار الإجراءات
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  color: colorScheme.secondaryContainer.withOpacity(0.5),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.medical_information_rounded, color: colorScheme.secondary),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text('يمكنك متابعة حالة الموعد وتحديثه فوراً من هذه الشاشة.'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () => _confirmCancel(context),
+                      icon: const Icon(Icons.cancel_rounded),
+                      label: const Text('إلغاء الموعد'),
+                      style: FilledButton.styleFrom(backgroundColor: colorScheme.error),
                     ),
-                    onPressed: () => _confirmCancel(context),
-                    icon: const Icon(Icons.cancel),
-                    label: const Text('إلغاء الموعد'),
                   ),
-
-                  // زر الموافقة على الموعد
-                  if (isDoctor && widget.appointment.status == 'pending')
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  if (isDoctor && widget.appointment.status == 'pending') ...[
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _confirmAppointment,
+                        icon: const Icon(Icons.check_circle_rounded),
+                        label: const Text('الموافقة'),
                       ),
-                      onPressed: _confirmAppointment,
-                      icon: const Icon(Icons.check_circle),
-                      label: const Text('الموافقة'),
                     ),
-
+                  ],
                 ],
               ),
-
-              SizedBox(height: 5,),
-              // زر دخول المعاينة
+              const SizedBox(height: 10),
               if (isDoctor && widget.appointment.status == 'confirmed')
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _markInSession,
+                    icon: const Icon(Icons.medical_services_rounded),
+                    label: const Text('المريض داخل المعاينة'),
                   ),
-                  onPressed: _markInSession,
-                  icon: const Icon(Icons.medical_services),
-                  label: const Text('المريض داخل المعاينة'),
                 ),
-
             ],
           ),
         ),
@@ -202,11 +219,63 @@ class _AppointmentDetailsScreenState extends State<AppointmentDetailsScreen> {
     );
   }
 
-  Widget _buildTile(String title, String value) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-      subtitle: Text(value.isNotEmpty ? value : '—'),
+  String? _contactImageUrl() {
+    return isDoctor ? widget.appointment.userImageUrl : widget.appointment.doctorImageUrl;
+  }
+
+  Widget _buildDetailRow(
+    BuildContext context,
+    IconData icon,
+    String title,
+    String value, {
+    bool isLast = false,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        Row(
+          children: [
+            Icon(icon, color: colorScheme.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                value.isNotEmpty ? value : '—',
+                textAlign: TextAlign.end,
+              ),
+            ),
+          ],
+        ),
+        if (!isLast)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Divider(height: 1),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildInfoChip(BuildContext context, {required IconData icon, required String text}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: colorScheme.primaryContainer.withOpacity(0.45),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: colorScheme.primary),
+          const SizedBox(width: 6),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 12))),
+        ],
+      ),
     );
   }
 
@@ -216,8 +285,18 @@ class _AppointmentDetailsScreenState extends State<AppointmentDetailsScreen> {
 
   String getArabicMonthName(int month) {
     const months = [
-      'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-      'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
+      'يناير',
+      'فبراير',
+      'مارس',
+      'أبريل',
+      'مايو',
+      'يونيو',
+      'يوليو',
+      'أغسطس',
+      'سبتمبر',
+      'أكتوبر',
+      'نوفمبر',
+      'ديسمبر'
     ];
     return months[month - 1];
   }
@@ -229,12 +308,12 @@ class _AppointmentDetailsScreenState extends State<AppointmentDetailsScreen> {
       case 'in_session':
         return 'داخل المعاينة';
       case 'canceled':
+      case 'cancelled':
         return 'ملغي';
       default:
         return 'قيد الانتظار';
     }
   }
-
 
   void _confirmCancel(BuildContext context) {
     showDialog(
@@ -244,11 +323,11 @@ class _AppointmentDetailsScreenState extends State<AppointmentDetailsScreen> {
         content: const Text('هل أنت متأكد أنك تريد إلغاء هذا الموعد؟'),
         actions: [
           TextButton(
-            child: const Text('إلغاء'),
+            child: const Text('تراجع'),
             onPressed: () => Navigator.pop(ctx),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
             child: const Text('نعم، إلغاء'),
             onPressed: () async {
               try {
@@ -257,8 +336,8 @@ class _AppointmentDetailsScreenState extends State<AppointmentDetailsScreen> {
                     .doc(widget.appointment.id)
                     .delete();
 
-                Navigator.pop(ctx); // إغلاق مربع الحوار
-                Navigator.pop(context); // الرجوع للخلف
+                Navigator.pop(ctx);
+                Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('تم إلغاء الموعد بنجاح')),
                 );
@@ -287,7 +366,7 @@ class _AppointmentDetailsScreenState extends State<AppointmentDetailsScreen> {
       );
 
       setState(() {
-        widget.appointment.status = 'confirmed'; // محدث فقط للعرض الحالي
+        widget.appointment.status = 'confirmed';
       });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
