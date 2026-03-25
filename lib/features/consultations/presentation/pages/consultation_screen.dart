@@ -10,6 +10,7 @@ import 'package:visibility_detector/visibility_detector.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io';
 import '../../../../core/config/medical_theme.dart';
@@ -588,7 +589,26 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
       }
       await _audioPlayer.stop();
       if (audioUrl != null && audioUrl.isNotEmpty) {
-        await _audioPlayer.play(UrlSource(audioUrl));
+        try {
+          await _audioPlayer.play(UrlSource(audioUrl));
+        } catch (_) {
+          final localPath = await _downloadRemoteAudioToFile(
+            messageId: messageId,
+            audioUrl: audioUrl,
+          );
+
+          if (localPath != null) {
+            await _audioPlayer.play(DeviceFileSource(localPath));
+          } else if (inlineAudioBase64 != null) {
+            final path = await _createInlineAudioFile(
+              messageId: messageId,
+              base64Data: inlineAudioBase64,
+            );
+            await _audioPlayer.play(DeviceFileSource(path));
+          } else {
+            rethrow;
+          }
+        }
       } else {
         final path = await _createInlineAudioFile(
           messageId: messageId,
@@ -599,6 +619,24 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
       setState(() => _playingMessageId = messageId);
     } catch (_) {
       _showErrorSnackbar('تعذر تشغيل الرسالة الصوتية');
+    }
+  }
+
+  Future<String?> _downloadRemoteAudioToFile({
+    required String messageId,
+    required String audioUrl,
+  }) async {
+    try {
+      final response = await http.get(Uri.parse(audioUrl));
+      if (response.statusCode != 200) return null;
+
+      final path = '${Directory.systemTemp.path}/remote_voice_$messageId.m4a';
+      final file = File(path);
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+      _inlineAudioFiles['remote_$messageId'] = path;
+      return path;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -1589,9 +1627,15 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
                             ? _audioDuration.inMilliseconds.toDouble()
                             : 1,
                         onChanged: (_playingMessageId == msgId)
-                            ? (value) => _audioPlayer.seek(
-                          Duration(milliseconds: value.toInt()),
-                        )
+                            ? (value) async {
+                                try {
+                                  await _audioPlayer.seek(
+                                    Duration(milliseconds: value.toInt()),
+                                  );
+                                } catch (_) {
+                                  _showErrorSnackbar('تعذر تحريك المؤشر الصوتي');
+                                }
+                              }
                             : null,
                       ),
                     ),
