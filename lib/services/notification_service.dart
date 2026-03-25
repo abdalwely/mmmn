@@ -7,6 +7,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'appointmentNotificationService.dart';
 import 'call_message_notification_service.dart';
 import 'medication_notification_service.dart';
+import 'local_in_app_notification_service.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -41,6 +42,7 @@ class NotificationService {
     );
 
     await _flutterLocalNotificationsPlugin.initialize(initSettings);
+    await LocalInAppNotificationService.initialize();
 
     // إعداد FCM
     await _setupFCM();
@@ -99,12 +101,23 @@ class NotificationService {
 
     const NotificationDetails notificationDetails = NotificationDetails(android: androidDetails);
 
+    final id = message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch;
     _flutterLocalNotificationsPlugin.show(
-      message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch,
+      id,
       message.notification?.title ?? 'مكالمة فيديو',
       message.notification?.body ?? 'لديك مكالمة فيديو قادمة',
       notificationDetails,
       payload: message.data.toString(),
+    );
+
+    LocalInAppNotificationService.storeNotification(
+      title: message.notification?.title ?? 'مكالمة فيديو',
+      body: message.notification?.body ?? 'لديك مكالمة فيديو قادمة',
+      type: 'call',
+      payload: message.data,
+      dedupeKey: 'call-${message.messageId ?? id}',
+      notificationId: id,
+      channelId: 'call_channel',
     );
   }
 
@@ -123,12 +136,23 @@ class NotificationService {
 
     const NotificationDetails notificationDetails = NotificationDetails(android: androidDetails);
 
+    final id = message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch;
     _flutterLocalNotificationsPlugin.show(
-      message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch,
+      id,
       message.notification?.title ?? 'رسالة جديدة',
       message.notification?.body ?? 'لديك رسالة جديدة من الطبيب',
       notificationDetails,
       payload: message.data.toString(),
+    );
+
+    LocalInAppNotificationService.storeNotification(
+      title: message.notification?.title ?? 'رسالة جديدة',
+      body: message.notification?.body ?? 'لديك رسالة جديدة من الطبيب',
+      type: 'message',
+      payload: message.data,
+      dedupeKey: 'message-${message.messageId ?? id}',
+      notificationId: id,
+      channelId: 'message_channel',
     );
   }
 
@@ -145,12 +169,23 @@ class NotificationService {
 
     const NotificationDetails notificationDetails = NotificationDetails(android: androidDetails);
 
+    final id = message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch;
     _flutterLocalNotificationsPlugin.show(
-      message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch,
+      id,
       message.notification?.title ?? 'تذكير بالموعد',
       message.notification?.body ?? 'لديك موعد قريب',
       notificationDetails,
       payload: message.data.toString(),
+    );
+
+    LocalInAppNotificationService.storeNotification(
+      title: message.notification?.title ?? 'تذكير بالموعد',
+      body: message.notification?.body ?? 'لديك موعد قريب',
+      type: 'appointment',
+      payload: message.data,
+      dedupeKey: 'appointment-${message.messageId ?? id}',
+      notificationId: id,
+      channelId: 'appointment_channel',
     );
   }
 
@@ -166,12 +201,23 @@ class NotificationService {
 
     const NotificationDetails notificationDetails = NotificationDetails(android: androidDetails);
 
+    final id = message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch;
     _flutterLocalNotificationsPlugin.show(
-      message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch,
+      id,
       message.notification?.title ?? 'digl',
       message.notification?.body ?? '',
       notificationDetails,
       payload: message.data.toString(),
+    );
+
+    LocalInAppNotificationService.storeNotification(
+      title: message.notification?.title ?? 'digl',
+      body: message.notification?.body ?? '',
+      type: 'general',
+      payload: message.data,
+      dedupeKey: 'general-${message.messageId ?? id}',
+      notificationId: id,
+      channelId: 'general_channel',
     );
   }
 

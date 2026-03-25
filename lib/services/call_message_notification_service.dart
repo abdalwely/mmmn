@@ -7,6 +7,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'local_in_app_notification_service.dart';
+
 class CallMessageNotificationService {
   static final CallMessageNotificationService _instance =
   CallMessageNotificationService._internal();
@@ -27,8 +29,20 @@ class CallMessageNotificationService {
       sound: true,
     );
 
+    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const ios = DarwinInitializationSettings(
+      defaultPresentAlert: true,
+      defaultPresentBadge: true,
+      defaultPresentSound: true,
+    );
+
+    await _notifications.initialize(
+      const InitializationSettings(android: android, iOS: ios),
+    );
+
     // إنشاء قنوات الإشعارات
     await _createNotificationChannels();
+    await LocalInAppNotificationService.initialize();
 
     // معالجة الإشعارات في الخلفية
     FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
@@ -125,6 +139,16 @@ class CallMessageNotificationService {
     );
 
     await _notifications.show(id, title, body, notificationDetails, payload: payloadString);
+
+    await LocalInAppNotificationService.storeNotification(
+      title: title,
+      body: body,
+      type: channel == 'call_channel' ? 'call' : 'message',
+      payload: payload,
+      dedupeKey: '${channel}-${payload['consultationId'] ?? payload['callId'] ?? id}',
+      notificationId: id,
+      channelId: channel,
+    );
   }
   Future<void> _saveDeviceToken(String token) async {
     final user = FirebaseAuth.instance.currentUser;
