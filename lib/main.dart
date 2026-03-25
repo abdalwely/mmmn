@@ -21,6 +21,8 @@ import 'package:digl/services/medication_service.dart';
 import 'package:digl/services/notification_service.dart';
 import 'package:digl/services/internet_checker_service.dart';
 import 'package:digl/services/advanced_medication_reminder_service.dart';
+import 'package:digl/services/patient_medication_reminder_service.dart';
+import 'package:digl/services/local_in_app_notification_service.dart';
 import 'package:digl/services/enhanced_incoming_call_service.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
@@ -106,6 +108,7 @@ Future<void> main() async {
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
   await initializeNotifications();
+  await LocalInAppNotificationService.initialize();
 
   final notificationService = NotificationService();
   await notificationService.initialize();
@@ -119,6 +122,8 @@ Future<void> main() async {
   await Hive.initFlutter();
 
   await AdvancedMedicationReminderService.initialize();
+  await PatientMedicationReminderService.initialize();
+  await PatientMedicationReminderService.rescheduleApprovedForCurrentPatient();
 
   await AdminSetupService.ensureAdminExists();
 

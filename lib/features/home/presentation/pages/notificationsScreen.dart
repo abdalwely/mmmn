@@ -104,8 +104,10 @@ class NotificationsScreen extends StatelessWidget {
           // ترتيب الإشعارات محلياً
           var docs = snapshot.data!.docs;
           docs.sort((a, b) {
-            final aCreatedAt = (a.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
-            final bCreatedAt = (b.data() as Map<String, dynamic>)['createdAt'] as Timestamp?;
+            final aData = a.data() as Map<String, dynamic>;
+            final bData = b.data() as Map<String, dynamic>;
+            final aCreatedAt = (aData['createdAt'] ?? aData['createdAtClient']) as Timestamp?;
+            final bCreatedAt = (bData['createdAt'] ?? bData['createdAtClient']) as Timestamp?;
             return (bCreatedAt?.toDate() ?? DateTime(1970)).compareTo(aCreatedAt?.toDate() ?? DateTime(1970));
           });
           if (docs.isEmpty) {
@@ -118,16 +120,24 @@ class NotificationsScreen extends StatelessWidget {
               final doc = docs[index];
               final data = doc.data() as Map<String, dynamic>;
               final isRead = data['isRead'] ?? false;
+              final type = (data['type'] ?? 'general').toString();
 
               return ListTile(
                 tileColor: isRead ? theme.dividerColor : theme.cardColor,
                 title: Text(data['title'] ?? ''),
-                subtitle: Text(data['body'] ?? ''),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(data['body'] ?? ''),
+                    const SizedBox(height: 4),
+                    Text('النوع: $type', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                  ],
+                ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      _formatTimestamp(data['createdAt']),
+                      _formatTimestamp((data['createdAt'] ?? data['createdAtClient']) as Timestamp?),
                       style: const TextStyle(fontSize: 12, color: Colors.grey),
                     ),
                     IconButton(
